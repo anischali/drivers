@@ -48,7 +48,7 @@ static const u32 hid_time_addresses[TIME_RTC_CHANNEL_MAX] = {
 	HID_USAGE_SENSOR_TIME_HOUR,
 	HID_USAGE_SENSOR_TIME_MINUTE,
 	HID_USAGE_SENSOR_TIME_SECOND,
-	HID_USAGE_SENSOR_TIME_ALARM,
+	HID_USAGE_SENSOR_TIME_ARM_ALARM,
 };
 
 /* Channel names for verbose error messages */
@@ -122,7 +122,7 @@ static int hid_time_capture_sample(struct hid_sensor_hub_device *hsdev,
 	case HID_USAGE_SENSOR_TIME_SECOND:
 		time_buf->tm_sec = (int)hid_time_value(raw_len, raw_data);
 		break;
-	case HID_USAGE_SENSOR_TIME_ALARM:
+	case HID_USAGE_SENSOR_TIME_ARM_ALARM:
 		break;
 	default:
 		return -EINVAL;
