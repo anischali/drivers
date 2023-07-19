@@ -421,6 +421,7 @@ static int hid_time_probe(struct platform_device *pdev)
 		goto err_rtc;
 	}
 
+	clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, time_state->rtc->features);
 	return ret;
 
 err_rtc:
