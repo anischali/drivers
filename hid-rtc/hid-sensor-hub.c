@@ -463,7 +463,7 @@ static int sensor_hub_reset_resume(struct hid_device *hdev)
 	return 0;
 }
 #endif
-bool stack = false;
+
 /*
  * Handle raw report as sent by device
  */
@@ -480,14 +480,9 @@ static int sensor_hub_raw_event(struct hid_device *hdev,
 	void *priv = NULL;
 	struct hid_sensor_hub_device *hsdev = NULL;
 	
-	hid_info(hdev, "sensor_hub_raw_event report id:0x%x size:%d type:%d\n",
-			 report->id, size, report->type);
-	hid_info(hdev, "maxfield:%d size: %d\n", report->maxfield, size);
 	if (report->type != HID_INPUT_REPORT)
 		return 1;
-	if (!stack)
-		dump_stack();
-	stack = true;	
+
 	ptr = raw_data;
 	if (report->id)
 		ptr++; /* Skip report id */
