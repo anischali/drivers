@@ -36,6 +36,7 @@ struct hid_time_state {
 	struct completion comp_last_time;
 	struct rtc_time time_buf;
 	struct rtc_device *rtc;
+	bool alarm;
 	int hid_usage;
 };
 
@@ -64,6 +65,11 @@ static int hid_time_proc_event(struct hid_sensor_hub_device *hsdev,
 	struct hid_time_state *time_state = platform_get_drvdata(priv);
 	spin_lock_irqsave(&time_state->lock_last_time, flags);
 	time_state->last_time = time_state->time_buf;
+	if (time_state->alarm)
+	{
+		rtc_update_irq(time_state->rtc, 1, RTC_IRQF | RTC_AF);
+		time_state->alarm = false;
+	}
 	spin_unlock_irqrestore(&time_state->lock_last_time, flags);
 	complete(&time_state->comp_last_time);
 	return 0;
@@ -123,6 +129,7 @@ static int hid_time_capture_sample(struct hid_sensor_hub_device *hsdev,
 		time_buf->tm_sec = (int)hid_time_value(raw_len, raw_data);
 		break;
 	case HID_USAGE_SENSOR_TIME_ARM_ALARM:
+		time_state->alarm = (int)hid_time_value(raw_len, raw_data);
 		break;
 	default:
 		return -EINVAL;
@@ -421,7 +428,6 @@ static int hid_time_probe(struct platform_device *pdev)
 		goto err_rtc;
 	}
 
-	clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, time_state->rtc->features);
 	return ret;
 
 err_rtc:
