@@ -356,13 +356,13 @@ static int luxafor_write(struct led_classdev *cdev, enum led_brightness br)
 static int company_write(struct led_classdev *cdev, enum led_brightness br)
 {
 	struct hidled_led *led = to_hidled_led(cdev);
-	__u8 buf[MAX_REPORT_SIZE + 2] = { [1] = 1 };
-
-	buf[2] = led->rgb->num + 1;
-	buf[3] = led->rgb->red.cdev.brightness;
-	buf[4] = led->rgb->green.cdev.brightness;
-	buf[5] = led->rgb->blue.cdev.brightness;
-
+	__u8 buf[6] = { [1] = 1 };
+	buf[0] = 1;
+	buf[1] = led->rgb->num;
+	buf[2] = led->rgb->red.cdev.brightness;
+	buf[3] = led->rgb->green.cdev.brightness;
+	buf[4] = led->rgb->blue.cdev.brightness;
+	
 	return hidled_send(led->rgb->ldev, buf);
 }
 
@@ -424,10 +424,10 @@ static const struct hidled_config hidled_configs[] = {
 		.type = COMPANY,
 		.name = "COMPANY Leds",
 		.short_name = "COMPANY",
-		.max_brightness = 100,
-		.num_leds = 5,
-		.report_size = 22,
-		.report_type = OUTPUT_REPORT,
+		.max_brightness = 255,
+		.num_leds = 2,
+		.report_size = 6,
+		.report_type = RAW_REQUEST,
 		.write = company_write,
 	},
 };
