@@ -13,29 +13,8 @@
 #include <linux/mutex.h>
 #include <linux/mfd/core.h>
 #include <linux/list.h>
-
+#include "hid_composite.h"
 #include "hid-ids.h"
-
-struct hid_subdevice_pending {
-	bool status;
-	struct completion ready;
-	u32 usage_id;
-	u32 attr_usage_id;
-	int raw_size;
-	u8  *raw_data;
-};
-
-struct hid_subdevice {
-	struct hid_device *hdev;
-	u32 vendor_id;
-	u32 product_id;
-	u32 usage;
-	int start_collection_index;
-	int end_collection_index;
-	struct mutex *mutex_ptr;
-	struct hid_subdevice_pending pending;
-};
-
 
 struct hid_composite_device {
 	struct mutex mutex;
@@ -45,6 +24,41 @@ struct hid_composite_device {
 	int hid_composite_client_cnt;
 	int ref_cnt;
 };
+
+
+int hid_composite_device_open(struct hid_subdevice *sdev)
+{
+	int ret = 0;
+	struct hid_composite_device *hsdev =  hid_get_drvdata(sdev->hdev);
+
+	mutex_lock(&hsdev->mutex);
+	if (!hsdev->ref_cnt) {
+		ret = hid_hw_open(hsdev->hdev);
+		if (ret) {
+			hid_err(hsdev->hdev, "failed to open hid device\n");
+			mutex_unlock(&hsdev->mutex);
+			return ret;
+		}
+	}
+	hsdev->ref_cnt++;
+	mutex_unlock(&hsdev->mutex);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(hid_composite_device_open);
+
+void hid_composite_device_close(struct hid_subdevice *sdev)
+{
+	struct hid_composite_device *hsdev =  hid_get_drvdata(sdev->hdev);
+
+	mutex_lock(&hsdev->mutex);
+	hsdev->ref_cnt--;
+	if (!hsdev->ref_cnt)
+		hid_hw_close(hsdev->hdev);
+	mutex_unlock(&hsdev->mutex);
+}
+EXPORT_SYMBOL_GPL(hid_composite_device_close);
+
 
 static int hid_composite_get_physical_device_count(struct hid_device *hdev)
 {
@@ -153,7 +167,7 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 			ldev->hid_composite_client_devs[
 				ldev->hid_composite_client_cnt].pdata_size =
 							sizeof(*hsdev);
-			hid_dbg(hdev, "Adding %s:%d\n", name,
+			hid_info(hdev, "Adding %s:%d\n", name,
 					hsdev->start_collection_index);
 			ldev->hid_composite_client_cnt++;
 
@@ -190,18 +204,16 @@ static void hid_composite_remove(struct hid_device *hdev)
 {
 	struct hid_composite_device *ldev = hid_get_drvdata(hdev);
 	unsigned long flags;
-	int i;
 
-	hid_dbg(hdev, " hardware removed\n");
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
 	spin_lock_irqsave(&ldev->lock, flags);
-	for (i = 0; i < ldev->hid_composite_client_cnt; ++i) {
+	/*for (i = 0; i < ldev->hid_composite_client_cnt; ++i) {
 		struct hid_subdevice *hsdev =
 			ldev->hid_composite_client_devs[i].platform_data;
 		if (hsdev->pending.status)
 			complete(&hsdev->pending.ready);
-	}
+	}*/
 	spin_unlock_irqrestore(&ldev->lock, flags);
 	mfd_remove_devices(&hdev->dev);
 	mutex_destroy(&ldev->mutex);
@@ -210,7 +222,7 @@ static void hid_composite_remove(struct hid_device *hdev)
 
 
 static const struct hid_device_id hid_composite_table[] = {
-    { HID_USB_DEVICE(0x18C9, 0x1044)},
+    { HID_USB_DEVICE(0x1000, 0x1000)},
 	{ }
 };
 MODULE_DEVICE_TABLE(hid, hid_composite_table);

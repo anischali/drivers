@@ -1,4 +1,4 @@
-obj-m += hid-composite.o
+obj-m += hid-composite.o hid-led.o hid-input.o
 
 KDIR?="/usr/src/linux-headers-$(shell uname -r)"
 
