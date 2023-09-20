@@ -64,7 +64,7 @@ int hid_composite_get_attribute_info(struct hid_subdevice *hsdev,
 				struct hid_attribute_info *info)
 {
 	int ret = -1;
-	int i, j;
+	int i;
 	struct hid_report *report;
 	struct hid_field *field;
 	struct hid_report_enum *report_enum;

@@ -227,6 +227,16 @@ static int hidled_init_rgb(struct hidled_rgb *rgb, unsigned int minor)
 }
 
 
+static void hidled_remove_rgb(struct hidled_device *ldev)
+{
+	int i;
+	for (i = 0; i < ldev->config->num_leds; i++) {
+		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].red.cdev);
+		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].green.cdev);
+		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].blue.cdev);
+	}
+}
+
 static int hidled_platform_probe(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -299,17 +309,10 @@ static int hidled_platform_probe(struct platform_device *pdev)
 
 static int hidled_platform_remove(struct platform_device *pdev)
 {
-	int i;
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
 	struct hidled_device *ldev = platform_get_drvdata(pdev);
 
-
-	for (i = 0; i < ldev->config->num_leds; i++) {
-		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].red.cdev);
-		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].green.cdev);
-		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].blue.cdev);
-	}
-
+	hidled_remove_rgb(ldev);
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
 	return 0;
