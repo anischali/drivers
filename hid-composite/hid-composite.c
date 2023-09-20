@@ -83,7 +83,6 @@ int hid_composite_get_attribute_info(struct hid_subdevice *hsdev,
 		for (i = 0; i < report->maxfield; ++i) {
 			field = report->field[i];
 			if (field->maxusage) {
-				hid_info(hdev, "usage: 0x%08x field->usage[0].hid: 0x%08x\n", attr_usage_id, field->usage[0].hid);
 				if ((field->application == usage_id || field->physical == usage_id) &&
 					(field->logical == attr_usage_id || field->usage[0].hid == attr_usage_id) &&
 					(field->usage[0].collection_index >= hsdev->start_collection_index) &&
@@ -264,8 +263,8 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 			ldev->hid_composite_client_devs[
 				ldev->hid_composite_client_cnt].pdata_size =
 							sizeof(*hsdev);
-			hid_info(hdev, "Adding %s:%d\n", name,
-					hsdev->start_collection_index);
+			hid_info(hdev, "Usage: 0x%08x Adding %s:%d-%d\n", hsdev->usage, name,
+					hsdev->start_collection_index, hsdev->end_collection_index);
 			ldev->hid_composite_client_cnt++;
 
 			if (collection_hsdev)
@@ -303,21 +302,9 @@ err_stop_hw:
  */
 static void hid_composite_remove(struct hid_device *hdev)
 {
-	struct hid_composite_device *ldev = hid_get_drvdata(hdev);
-	unsigned long flags;
-
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
-	spin_lock_irqsave(&ldev->lock, flags);
-	/*for (i = 0; i < ldev->hid_composite_client_cnt; ++i) {
-		struct hid_subdevice *hsdev =
-			ldev->hid_composite_client_devs[i].platform_data;
-		if (hsdev->pending.status)
-			complete(&hsdev->pending.ready);
-	}*/
-	spin_unlock_irqrestore(&ldev->lock, flags);
 	mfd_remove_devices(&hdev->dev);
-	mutex_destroy(&ldev->mutex);
 }
 
 

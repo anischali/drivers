@@ -27,10 +27,10 @@ enum hidled_usages {
 	HID_RGB_RED_LED_USAGE = 0x00080053,
 	HID_RGB_BLUE_LED_USAGE = 0x00080054,
 	HID_RGB_GREEN_LED_USAGE = 0x00080055,
+	HID_RGB_INTENSITY_LED_USAGE = 0x00080055,
 };
 
 static const uint32_t hidled_addresses[] = {
-	HID_RGB_LED_USAGE,
 	HID_RGB_RED_LED_USAGE,
 	HID_RGB_BLUE_LED_USAGE,
 	HID_RGB_GREEN_LED_USAGE,
@@ -68,7 +68,7 @@ struct hidled_rgb {
 
 struct hidled_device {
 	struct hid_attribute_info *info;
-	const struct hidled_config *config;
+	struct hidled_config *config;
 	struct hid_device       *hdev;
 	struct hidled_rgb	*rgb;
 	u8			*buf;
@@ -148,7 +148,8 @@ static int hidled_write(struct led_classdev *cdev, enum led_brightness br)
 	struct hidled_device *ldev = led->rgb->ldev;
 
 	__u8 buf[6] = { [1] = 1 };
-	buf[0] = ldev->info[led->rgb->num].report_id;
+
+	buf[0] = (uint8_t)ldev->info[led->rgb->num].report_id;
 	buf[1] = led->rgb->num;
 	buf[2] = led->rgb->red.cdev.brightness;
 	buf[3] = led->rgb->green.cdev.brightness;
@@ -161,11 +162,31 @@ static struct hidled_config hidled_config = {
 		.name = "HID Leds",
 		.short_name = "HID_LED",
 		.max_brightness = 255,
-		.num_leds = 2,
 		.report_size = 6,
 		.report_type = RAW_REQUEST,
 		.write = hidled_write,
 };
+
+unsigned int hidled_count_leds(struct hid_device *hdev)
+{
+	struct hid_report *report;
+	struct hid_field *field;
+	int i, j;
+	unsigned int count = 0;
+
+	list_for_each_entry(report,
+			    &hdev->report_enum[HID_OUTPUT_REPORT].report_list,
+			    list) {
+		for (i = 0; i < report->maxfield; i++) {
+			field = report->field[i];
+				if (field->application == HID_RGB_LED_USAGE)
+					count += 1;
+		}
+	}
+	return count;
+}
+
+
 
 static int hidled_parse_report(struct platform_device *pdev)
 {
@@ -268,7 +289,7 @@ static int hidled_platform_probe(struct platform_device *pdev)
 		if (ret)
 			return ret;
 	}
-
+	ldev->config->num_leds = hidled_count_leds(hsdev->hdev);
 	ldev->rgb = devm_kcalloc(&pdev->dev, ldev->config->num_leds,
 				 sizeof(struct hidled_rgb), GFP_KERNEL);
 	if (!ldev->rgb)
