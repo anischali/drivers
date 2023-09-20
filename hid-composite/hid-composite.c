@@ -25,7 +25,91 @@ struct hid_composite_device {
 	int ref_cnt;
 };
 
+/**
+ * @brief 
+ * 
+ * @param info 
+ * @param index 
+ * @param report_id 
+ * @param field 
+ */
+static void hid_composite_fill_attr_info(
+		struct hid_attribute_info *info,
+		s32 index, s32 report_id, struct hid_field *field)
+{
+	info->index = index;
+	info->report_id = report_id;
+	info->units = field->unit;
+	info->unit_expo = field->unit_exponent;
+	info->size = (field->report_size * field->report_count)/8;
+	info->logical_minimum = field->logical_minimum;
+	info->logical_maximum = field->logical_maximum;
+}
 
+/**
+ * @brief 
+ * 
+ * @param hsdev 
+ * @param type 
+ * @param usage_id 
+ * @param attr_usage_id 
+ * @param info 
+ * @return int 
+ */
+
+int hid_composite_get_attribute_info(struct hid_subdevice *hsdev,
+				u8 type,
+				u32 usage_id,
+				u32 attr_usage_id,
+				struct hid_attribute_info *info)
+{
+	int ret = -1;
+	int i, j;
+	struct hid_report *report;
+	struct hid_field *field;
+	struct hid_report_enum *report_enum;
+	struct hid_device *hdev = hsdev->hdev;
+
+	/* Initialize with defaults */
+	info->usage_id = usage_id;
+	info->attrib_id = attr_usage_id;
+	info->report_id = -1;
+	info->index = -1;
+	info->units = -1;
+	info->unit_expo = -1;
+
+	report_enum = &hdev->report_enum[type];
+	list_for_each_entry(report, &report_enum->report_list, list) {
+		for (i = 0; i < report->maxfield; ++i) {
+			field = report->field[i];
+			if (field->maxusage) {
+				hid_info(hdev, "usage: 0x%08x field->usage[0].hid: 0x%08x\n", attr_usage_id, field->usage[0].hid);
+				if ((field->application == usage_id || field->physical == usage_id) &&
+					(field->logical == attr_usage_id || field->usage[0].hid == attr_usage_id) &&
+					(field->usage[0].collection_index >= hsdev->start_collection_index) &&
+					(field->usage[0].collection_index < hsdev->end_collection_index)) {
+						
+					hid_composite_fill_attr_info(info, i,
+								report->id,
+								field);
+					ret = 0;
+					break;
+				}
+			}
+		}
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(hid_composite_get_attribute_info);
+
+
+/**
+ * @brief 
+ * 
+ * @param sdev 
+ * @return int 
+ */
 int hid_composite_device_open(struct hid_subdevice *sdev)
 {
 	int ret = 0;
@@ -47,6 +131,12 @@ int hid_composite_device_open(struct hid_subdevice *sdev)
 }
 EXPORT_SYMBOL_GPL(hid_composite_device_open);
 
+
+/**
+ * @brief 
+ * 
+ * @param sdev 
+ */
 void hid_composite_device_close(struct hid_subdevice *sdev)
 {
 	struct hid_composite_device *hsdev =  hid_get_drvdata(sdev->hdev);
@@ -75,12 +165,19 @@ static int hid_composite_get_physical_device_count(struct hid_device *hdev)
 	return count;
 }
 
+/**
+ * @brief 
+ * 
+ * @param hdev 
+ * @param id 
+ * @return int 
+ */
 static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	struct hid_composite_device *ldev;
 	unsigned int minor;
 	int ret, i, dev_cnt;
-	struct hid_subdevice *hsdev, *last_hsdev = NULL, *collection_hsdev = NULL;
+	struct hid_subdevice *hsdev = NULL, *last_hsdev = NULL, *collection_hsdev = NULL;
 	char *name;
 
 	ldev = devm_kzalloc(&hdev->dev, sizeof(*ldev), GFP_KERNEL);
@@ -199,7 +296,11 @@ err_stop_hw:
 	return ret;
 }
 
-
+/**
+ * @brief 
+ * 
+ * @param hdev 
+ */
 static void hid_composite_remove(struct hid_device *hdev)
 {
 	struct hid_composite_device *ldev = hid_get_drvdata(hdev);
@@ -222,7 +323,7 @@ static void hid_composite_remove(struct hid_device *hdev)
 
 
 static const struct hid_device_id hid_composite_table[] = {
-    { HID_USB_DEVICE(0x1000, 0x1000)},
+    { HID_USB_DEVICE(0x18C9, 0x1044)},
 	{ }
 };
 MODULE_DEVICE_TABLE(hid, hid_composite_table);

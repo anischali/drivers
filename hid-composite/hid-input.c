@@ -53,7 +53,7 @@ static int hidinput_platform_remove(struct platform_device *pdev)
 static const struct platform_device_id hidinput_platform_ids[] = {
 	{
 		/* Format: HID-COMPOSITE-usage_id_in_hex_lowercase */
-		.name = "HID-COMPOSITE-80052",
+		.name = "HID-COMPOSITE-10080",
 	},
 	{ /* sentinel */ }
 };

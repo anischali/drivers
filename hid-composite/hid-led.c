@@ -22,56 +22,26 @@ enum hidled_report_type {
 	OUTPUT_REPORT
 };
 
-enum hidled_type {
-	RISO_KAGAKU,
-	DREAM_CHEEKY,
-	THINGM,
-	DELCOM,
-	LUXAFOR,
-    COMPANY,
+enum hidled_usages {
+	HID_RGB_LED_USAGE = 0x00080052,
+	HID_RGB_RED_LED_USAGE = 0x00080053,
+	HID_RGB_BLUE_LED_USAGE = 0x00080054,
+	HID_RGB_GREEN_LED_USAGE = 0x00080055,
 };
 
-static unsigned const char riso_kagaku_tbl[] = {
-/* R+2G+4B -> riso kagaku color index */
-	[0] = 0, /* black   */
-	[1] = 2, /* red     */
-	[2] = 1, /* green   */
-	[3] = 5, /* yellow  */
-	[4] = 3, /* blue    */
-	[5] = 6, /* magenta */
-	[6] = 4, /* cyan    */
-	[7] = 7  /* white   */
+static const uint32_t hidled_addresses[] = {
+	HID_RGB_LED_USAGE,
+	HID_RGB_RED_LED_USAGE,
+	HID_RGB_BLUE_LED_USAGE,
+	HID_RGB_GREEN_LED_USAGE,
 };
 
 #define RISO_KAGAKU_IX(r, g, b) riso_kagaku_tbl[((r)?1:0)+((g)?2:0)+((b)?4:0)]
-
-union delcom_packet {
-	__u8 data[8];
-	struct {
-		__u8 major_cmd;
-		__u8 minor_cmd;
-		__u8 data_lsb;
-		__u8 data_msb;
-	} tx;
-	struct {
-		__u8 cmd;
-	} rx;
-	struct {
-		__le16 family_code;
-		__le16 security_code;
-		__u8 fw_version;
-	} fw;
-};
-
-#define DELCOM_GREEN_LED	0
-#define DELCOM_RED_LED		1
-#define DELCOM_BLUE_LED		2
 
 struct hidled_device;
 struct hidled_rgb;
 
 struct hidled_config {
-	enum hidled_type	type;
 	const char		*name;
 	const char		*short_name;
 	enum led_brightness	max_brightness;
@@ -97,6 +67,7 @@ struct hidled_rgb {
 };
 
 struct hidled_device {
+	struct hid_attribute_info *info;
 	const struct hidled_config *config;
 	struct hid_device       *hdev;
 	struct hidled_rgb	*rgb;
@@ -107,11 +78,6 @@ struct hidled_device {
 #define MAX_REPORT_SIZE		16
 
 #define to_hidled_led(arg) container_of(arg, struct hidled_led, cdev)
-
-static bool riso_kagaku_switch_green_blue;
-module_param(riso_kagaku_switch_green_blue, bool, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(riso_kagaku_switch_green_blue,
-	"switch green and blue RGB component for Riso Kagaku devices");
 
 static int hidled_send(struct hidled_device *ldev, __u8 *buf)
 {
@@ -175,264 +141,52 @@ err:
 	return ret < 0 ? ret : 0;
 }
 
-static u8 riso_kagaku_index(struct hidled_rgb *rgb)
-{
-	enum led_brightness r, g, b;
 
-	r = rgb->red.cdev.brightness;
-	g = rgb->green.cdev.brightness;
-	b = rgb->blue.cdev.brightness;
-
-	if (riso_kagaku_switch_green_blue)
-		return RISO_KAGAKU_IX(r, b, g);
-	else
-		return RISO_KAGAKU_IX(r, g, b);
-}
-
-static int riso_kagaku_write(struct led_classdev *cdev, enum led_brightness br)
+static int hidled_write(struct led_classdev *cdev, enum led_brightness br)
 {
 	struct hidled_led *led = to_hidled_led(cdev);
-	struct hidled_rgb *rgb = led->rgb;
-	__u8 buf[MAX_REPORT_SIZE] = {};
+	struct hidled_device *ldev = led->rgb->ldev;
 
-	buf[1] = riso_kagaku_index(rgb);
-
-	return hidled_send(rgb->ldev, buf);
-}
-
-static int dream_cheeky_write(struct led_classdev *cdev, enum led_brightness br)
-{
-	struct hidled_led *led = to_hidled_led(cdev);
-	struct hidled_rgb *rgb = led->rgb;
-	__u8 buf[MAX_REPORT_SIZE] = {};
-
-	buf[1] = rgb->red.cdev.brightness;
-	buf[2] = rgb->green.cdev.brightness;
-	buf[3] = rgb->blue.cdev.brightness;
-	buf[7] = 0x1a;
-	buf[8] = 0x05;
-
-	return hidled_send(rgb->ldev, buf);
-}
-
-static int dream_cheeky_init(struct hidled_device *ldev)
-{
-	__u8 buf[MAX_REPORT_SIZE] = {};
-
-	/* Dream Cheeky magic */
-	buf[1] = 0x1f;
-	buf[2] = 0x02;
-	buf[4] = 0x5f;
-	buf[7] = 0x1a;
-	buf[8] = 0x03;
-
-	return hidled_send(ldev, buf);
-}
-
-static int _thingm_write(struct led_classdev *cdev, enum led_brightness br,
-			 u8 offset)
-{
-	struct hidled_led *led = to_hidled_led(cdev);
-	__u8 buf[MAX_REPORT_SIZE] = { 1, 'c' };
-
-	buf[2] = led->rgb->red.cdev.brightness;
-	buf[3] = led->rgb->green.cdev.brightness;
-	buf[4] = led->rgb->blue.cdev.brightness;
-	buf[7] = led->rgb->num + offset;
-
-	return hidled_send(led->rgb->ldev, buf);
-}
-
-static int thingm_write_v1(struct led_classdev *cdev, enum led_brightness br)
-{
-	return _thingm_write(cdev, br, 0);
-}
-
-static int thingm_write(struct led_classdev *cdev, enum led_brightness br)
-{
-	return _thingm_write(cdev, br, 1);
-}
-
-static const struct hidled_config hidled_config_thingm_v1 = {
-	.name = "ThingM blink(1) v1",
-	.short_name = "thingm",
-	.max_brightness = 255,
-	.num_leds = 1,
-	.report_size = 9,
-	.report_type = RAW_REQUEST,
-	.write = thingm_write_v1,
-};
-
-static int thingm_init(struct hidled_device *ldev)
-{
-	__u8 buf[MAX_REPORT_SIZE] = { 1, 'v' };
-	int ret;
-
-	ret = hidled_recv(ldev, buf);
-	if (ret)
-		return ret;
-
-	/* Check for firmware major version 1 */
-	if (buf[3] == '1')
-		ldev->config = &hidled_config_thingm_v1;
-
-	return 0;
-}
-
-static inline int delcom_get_lednum(const struct hidled_led *led)
-{
-	if (led == &led->rgb->red)
-		return DELCOM_RED_LED;
-	else if (led == &led->rgb->green)
-		return DELCOM_GREEN_LED;
-	else
-		return DELCOM_BLUE_LED;
-}
-
-static int delcom_enable_led(struct hidled_led *led)
-{
-	union delcom_packet dp = { .tx.major_cmd = 101, .tx.minor_cmd = 12 };
-
-	dp.tx.data_lsb = 1 << delcom_get_lednum(led);
-	dp.tx.data_msb = 0;
-
-	return hidled_send(led->rgb->ldev, dp.data);
-}
-
-static int delcom_set_pwm(struct hidled_led *led)
-{
-	union delcom_packet dp = { .tx.major_cmd = 101, .tx.minor_cmd = 34 };
-
-	dp.tx.data_lsb = delcom_get_lednum(led);
-	dp.tx.data_msb = led->cdev.brightness;
-
-	return hidled_send(led->rgb->ldev, dp.data);
-}
-
-static int delcom_write(struct led_classdev *cdev, enum led_brightness br)
-{
-	struct hidled_led *led = to_hidled_led(cdev);
-	int ret;
-
-	/*
-	 * enable LED
-	 * We can't do this in the init function already because the device
-	 * is internally reset later.
-	 */
-	ret = delcom_enable_led(led);
-	if (ret)
-		return ret;
-
-	return delcom_set_pwm(led);
-}
-
-static int delcom_init(struct hidled_device *ldev)
-{
-	union delcom_packet dp = { .rx.cmd = 104 };
-	int ret;
-
-	ret = hidled_recv(ldev, dp.data);
-	if (ret)
-		return ret;
-	/*
-	 * Several Delcom devices share the same USB VID/PID
-	 * Check for family id 2 for Visual Signal Indicator
-	 */
-	return le16_to_cpu(dp.fw.family_code) == 2 ? 0 : -ENODEV;
-}
-
-static int luxafor_write(struct led_classdev *cdev, enum led_brightness br)
-{
-	struct hidled_led *led = to_hidled_led(cdev);
-	__u8 buf[MAX_REPORT_SIZE] = { [1] = 1 };
-
-	buf[2] = led->rgb->num + 1;
-	buf[3] = led->rgb->red.cdev.brightness;
-	buf[4] = led->rgb->green.cdev.brightness;
-	buf[5] = led->rgb->blue.cdev.brightness;
-
-	return hidled_send(led->rgb->ldev, buf);
-}
-
-
-static int company_write(struct led_classdev *cdev, enum led_brightness br)
-{
-	struct hidled_led *led = to_hidled_led(cdev);
 	__u8 buf[6] = { [1] = 1 };
-	buf[0] = 1;
+	buf[0] = ldev->info[led->rgb->num].report_id;
 	buf[1] = led->rgb->num;
 	buf[2] = led->rgb->red.cdev.brightness;
 	buf[3] = led->rgb->green.cdev.brightness;
 	buf[4] = led->rgb->blue.cdev.brightness;
 	
-	return hidled_send(led->rgb->ldev, buf);
+	return hidled_send(ldev, buf);
 }
 
-static const struct hidled_config hidled_configs[] = {
-	{
-		.type = RISO_KAGAKU,
-		.name = "Riso Kagaku Webmail Notifier",
-		.short_name = "riso_kagaku",
-		.max_brightness = 1,
-		.num_leds = 1,
-		.report_size = 6,
-		.report_type = OUTPUT_REPORT,
-		.write = riso_kagaku_write,
-	},
-	{
-		.type = DREAM_CHEEKY,
-		.name = "Dream Cheeky Webmail Notifier",
-		.short_name = "dream_cheeky",
-		.max_brightness = 63,
-		.num_leds = 1,
-		.report_size = 9,
-		.report_type = RAW_REQUEST,
-		.init = dream_cheeky_init,
-		.write = dream_cheeky_write,
-	},
-	{
-		.type = THINGM,
-		.name = "ThingM blink(1)",
-		.short_name = "thingm",
-		.max_brightness = 255,
-		.num_leds = 2,
-		.report_size = 9,
-		.report_type = RAW_REQUEST,
-		.init = thingm_init,
-		.write = thingm_write,
-	},
-	{
-		.type = DELCOM,
-		.name = "Delcom Visual Signal Indicator G2",
-		.short_name = "delcom",
-		.max_brightness = 100,
-		.num_leds = 1,
-		.report_size = 8,
-		.report_type = RAW_REQUEST,
-		.init = delcom_init,
-		.write = delcom_write,
-	},
-	{
-		.type = LUXAFOR,
-		.name = "Greynut Luxafor",
-		.short_name = "luxafor",
-		.max_brightness = 255,
-		.num_leds = 6,
-		.report_size = 9,
-		.report_type = OUTPUT_REPORT,
-		.write = luxafor_write,
-	},
-    {
-		.type = COMPANY,
-		.name = "COMPANY Leds",
-		.short_name = "COMPANY",
+static struct hidled_config hidled_config = {
+		.name = "HID Leds",
+		.short_name = "HID_LED",
 		.max_brightness = 255,
 		.num_leds = 2,
 		.report_size = 6,
 		.report_type = RAW_REQUEST,
-		.write = company_write,
-	},
+		.write = hidled_write,
 };
+
+static int hidled_parse_report(struct platform_device *pdev)
+{
+	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
+	struct hidled_device *ldev = platform_get_drvdata(pdev);
+	int i, ret;
+
+	for (i = 0; i < ldev->config->num_leds; i++)
+	{
+		ret = hid_composite_get_attribute_info(hsdev, 
+				HID_OUTPUT_REPORT, 
+				HID_RGB_LED_USAGE, 
+				HID_RGB_LED_USAGE, 
+				&ldev->info[i]);
+		if (ret)
+			return -EINVAL;
+		
+	}
+
+	return 0;
+}
 
 static int hidled_init_led(struct hidled_led *led, const char *color_name,
 			   struct hidled_rgb *rgb, unsigned int minor)
@@ -477,7 +231,6 @@ static int hidled_platform_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
-	const struct platform_device_id *id = platform_get_device_id(pdev);
 	struct hidled_device *ldev;
 	unsigned int minor;
 	int i;
@@ -495,9 +248,7 @@ static int hidled_platform_probe(struct platform_device *pdev)
 
 	ldev->hdev = hsdev->hdev;
 	mutex_init(&ldev->lock);
-	for (i = 0; !ldev->config && i < ARRAY_SIZE(hidled_configs); i++)
-		if (hidled_configs[i].type == id->driver_data)
-			ldev->config = &hidled_configs[i];
+	ldev->config = &hidled_config;
 
 	if (!ldev->config)
 		return -EINVAL;
@@ -512,13 +263,24 @@ static int hidled_platform_probe(struct platform_device *pdev)
 				 sizeof(struct hidled_rgb), GFP_KERNEL);
 	if (!ldev->rgb)
 		return -ENOMEM;
+	
+	ldev->info = devm_kcalloc(&pdev->dev, ldev->config->num_leds,
+				 sizeof(struct hidled_rgb), GFP_KERNEL);
+	if (!ldev->info)
+		return -ENOMEM;
 
+	platform_set_drvdata(pdev, ldev);
+	
 	ret = hid_composite_device_open(hsdev);
 	if (ret)
 		return ret;
 
 	hid_device_io_start(hsdev->hdev);
 
+	ret = hidled_parse_report(pdev);
+	if (ret)
+		return ret;
+	
 	minor = ((struct hidraw *) hsdev->hdev->hidraw)->minor;
 
 	for (i = 0; i < ldev->config->num_leds; i++) {
@@ -532,13 +294,21 @@ static int hidled_platform_probe(struct platform_device *pdev)
 		}
 	}
 
-
 	return 0;
 }
 
 static int hidled_platform_remove(struct platform_device *pdev)
 {
+	int i;
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
+	struct hidled_device *ldev = platform_get_drvdata(pdev);
+
+
+	for (i = 0; i < ldev->config->num_leds; i++) {
+		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].red.cdev);
+		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].green.cdev);
+		devm_led_classdev_unregister(&ldev->hdev->dev, &ldev->rgb[i].blue.cdev);
+	}
 
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
@@ -548,8 +318,7 @@ static int hidled_platform_remove(struct platform_device *pdev)
 static const struct platform_device_id hidled_platform_ids[] = {
 	{
 		/* Format: HID-COMPOSITE-usage_id_in_hex_lowercase */
-		.name = "HID-COMPOSITE-10080",
-		.driver_data = COMPANY
+		.name = "HID-COMPOSITE-80052",
 	},
 	{ /* sentinel */ }
 };
