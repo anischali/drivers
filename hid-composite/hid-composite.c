@@ -608,7 +608,7 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 	
 	INIT_LIST_HEAD(&hdev->inputs);
 
-	ret = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
+	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret)
 		return ret;
 	
