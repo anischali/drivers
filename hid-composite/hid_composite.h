@@ -3,6 +3,12 @@
 #include <linux/hid.h>
 #include <linux/hidraw.h>
 
+enum hid_composite_read_flags {
+	HID_COMPOSITE_SYNC,
+	HID_COMPOSITE_ASYNC,
+};
+
+
 struct hid_subdevice_pending {
 	bool status;
 	struct completion ready;
@@ -49,6 +55,29 @@ struct hid_subdevice {
 	struct hid_subdevice_pending pending;
 	struct hid_attribute_info *info;
 };
+
+
+
+/**
+ * struct hid_sensor_hub_callbacks - Client callback functions
+ * @pdev:		Platform device instance of the client driver.
+ * @suspend:		Suspend callback.
+ * @resume:		Resume callback.
+ * @capture_sample:	Callback to get a sample.
+ * @send_event:		Send notification to indicate all samples are
+ *			captured, process and send event
+ */
+struct hid_composite_callbacks {
+	struct platform_device *pdev;
+	int (*suspend)(struct hid_subdevice *hsdev, void *priv);
+	int (*resume)(struct hid_subdevice *hsdev, void *priv);
+	int (*capture_sample)(struct hid_subdevice *hsdev,
+			u32 usage_id, size_t raw_len, char *raw_data,
+			void *priv);
+	int (*send_event)(struct hid_subdevice *hsdev, u32 usage_id,
+			 void *priv);
+};
+
 
 int hid_composite_device_open(struct hid_subdevice *sdev);
 void hid_composite_device_close(struct hid_subdevice *sdev);

@@ -171,7 +171,7 @@ unsigned int hidled_count_leds(struct hid_device *hdev)
 {
 	struct hid_report *report;
 	struct hid_field *field;
-	int i, j;
+	int i;
 	unsigned int count = 0;
 
 	list_for_each_entry(report,
