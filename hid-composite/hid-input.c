@@ -17,13 +17,48 @@
 #include "hid_composite.h"
 #include <linux/iio/iio.h>
 
+
+struct hidinput_device {
+	int hid_usage;
+	struct hid_subdevice *hsdev;
+	struct hid_composite_callbacks callbacks;
+};
+
+static int hidinput_proc_event(struct hid_subdevice *hsdev,
+				unsigned usage_id, void *priv)
+{
+	hid_info(hsdev->hdev, "hidinput called: usage_id=0x%08x\n", usage_id);
+	hidinput_report_event(hsdev->hdev, NULL);
+
+	return 0;
+}
+
+
+
 static int hidinput_platform_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
+	struct hidinput_device *input;
 
 	if (!hsdev)
 		return -ENODEV;
+
+	input = devm_kzalloc(&pdev->dev,
+				 sizeof(struct hidinput_device), GFP_KERNEL);
+	if (!input)
+		return -ENOMEM;
+
+
+	input->callbacks.send_event = hidinput_proc_event;
+	input->callbacks.capture_sample = NULL;
+	input->callbacks.pdev = pdev;
+	ret = hid_composite_register_callback(hsdev, hsdev->usage,
+					&input->callbacks);
+	if (ret < 0) {
+		hid_err(hsdev->hdev, "register callback failed!\n");
+		return ret;
+	}
 
 	ret = hid_composite_device_open(hsdev);
 	if (ret)
@@ -36,7 +71,7 @@ static int hidinput_platform_probe(struct platform_device *pdev)
 		hid_composite_device_close(hsdev);
 		return ret;
 	}
-	hid_info(hsdev->hdev, "hidinput platform device probed\n");
+	hid_dbg(hsdev->hdev, "hidinput (usage: 0x%08x) platform device probed\n", hsdev->usage);
 	return 0;
 }
 
@@ -44,6 +79,7 @@ static int hidinput_platform_remove(struct platform_device *pdev)
 {
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
 
+	hid_composite_remove_callback(hsdev, hsdev->usage);
 	hidinput_disconnect(hsdev->hdev);
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
