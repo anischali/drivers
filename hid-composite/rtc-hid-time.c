@@ -68,7 +68,6 @@ static int hid_time_proc_event(struct hid_subdevice *hsdev,
 	time_state->last_time = time_state->time_buf;
 	if (time_state->alarm)
 	{
-		hid_info(hsdev->hdev, "Alarm raised\n");
 		rtc_update_irq(time_state->rtc, 1, RTC_IRQF | RTC_AF);
 		time_state->alarm = false;
 	}
