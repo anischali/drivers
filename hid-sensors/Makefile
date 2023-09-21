@@ -16,6 +16,6 @@ all:
 	$(MAKE) -C $(KDIR) M=$(SRC) modules
 
 clean:
-	rm -f *.o.d *.o *~ core .depend .*.cmd *.ko *.mod.c *.mod
+	rm -f .*.o.d *.o.d *.o *~ core .depend .*.cmd *.ko *.mod.c *.mod
 	rm -f Module.markers Module.symvers modules.order
 	rm -rf .tmp_versions Modules.symvers
