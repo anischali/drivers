@@ -6,9 +6,10 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
-#include <linux/hid-sensor-hub.h>
+#include "hid_composite.h"
 #include <linux/iio/iio.h>
 #include <linux/rtc.h>
+#include <linux/hid-sensor-ids.h>
 
 enum hid_time_channel {
 	CHANNEL_SCAN_INDEX_YEAR,
@@ -28,14 +29,14 @@ struct hid_time_data_t {
 };
 
 struct hid_time_state {
-	struct hid_sensor_hub_callbacks callbacks;
-	struct hid_sensor_common common_attributes;
-	struct hid_sensor_hub_attribute_info info[TIME_RTC_CHANNEL_MAX];
+	struct hid_composite_callbacks callbacks;
+	struct hid_attribute_info info[TIME_RTC_CHANNEL_MAX];
 	struct rtc_time last_time;
 	spinlock_t lock_last_time;
 	struct completion comp_last_time;
 	struct rtc_time time_buf;
 	struct rtc_device *rtc;
+	struct hid_subdevice *hsdev;
 	bool alarm;
 	int hid_usage;
 };
@@ -58,7 +59,7 @@ static const char * const hid_time_channel_names[TIME_RTC_CHANNEL_MAX] = {
 };
 
 /* Callback handler to send event after all samples are received and captured */
-static int hid_time_proc_event(struct hid_sensor_hub_device *hsdev,
+static int hid_time_proc_event(struct hid_subdevice *hsdev,
 				unsigned usage_id, void *priv)
 {
 	unsigned long flags;
@@ -67,6 +68,7 @@ static int hid_time_proc_event(struct hid_sensor_hub_device *hsdev,
 	time_state->last_time = time_state->time_buf;
 	if (time_state->alarm)
 	{
+		hid_info(hsdev->hdev, "Alarm raised\n");
 		rtc_update_irq(time_state->rtc, 1, RTC_IRQF | RTC_AF);
 		time_state->alarm = false;
 	}
@@ -89,7 +91,7 @@ static u32 hid_time_value(size_t raw_len, char *raw_data)
 	}
 }
 
-static int hid_time_capture_sample(struct hid_sensor_hub_device *hsdev,
+static int hid_time_capture_sample(struct hid_subdevice *hsdev,
 				unsigned usage_id, size_t raw_len,
 				char *raw_data, void *priv)
 {
@@ -151,14 +153,14 @@ static const char *hid_time_attrib_name(u32 attrib_id)
 }
 
 static int hid_time_parse_report(struct platform_device *pdev,
-				struct hid_sensor_hub_device *hsdev,
+				struct hid_subdevice *hsdev,
 				unsigned usage_id,
 				struct hid_time_state *time_state)
 {
 	int report_id, i;
 
 	for (i = 0; i < TIME_RTC_CHANNEL_MAX; ++i)
-		if (sensor_hub_input_get_attribute_info(hsdev,
+		if (hid_composite_get_attribute_info(hsdev,
 				HID_INPUT_REPORT, usage_id,
 				hid_time_addresses[i],
 				&time_state->info[i]) < 0)
@@ -217,9 +219,9 @@ static int hid_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	
 	reinit_completion(&time_state->comp_last_time);
 	/* get a report with all values through requesting one value */
-	sensor_hub_input_attr_get_raw_value(time_state->common_attributes.hsdev,
+	hid_composite_input_attr_get_raw_value(time_state->hsdev,
 			time_state->hid_usage, hid_time_addresses[0],
-			time_state->info[0].report_id, SENSOR_HUB_SYNC, false);
+			time_state->info[0].report_id, HID_COMPOSITE_SYNC, false);
 	/* wait for all values (event) */
 	
 	ret = wait_for_completion_killable_timeout(
@@ -237,23 +239,13 @@ static int hid_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	return ret; /* killed (-ERESTARTSYS) */
 }
 
-static struct sensor_hub_data {
-	struct mutex mutex;
-	spinlock_t lock;
-	struct list_head dyn_callback_list;
-	spinlock_t dyn_callback_lock;
-	struct mfd_cell *hid_sensor_hub_client_devs;
-	int hid_sensor_client_cnt;
-	int ref_cnt;
-};
-
 
 static int
 hid_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
 	struct hid_time_state *time_state = dev_get_drvdata(dev);
 	int report_id = time_state->info[0].report_id;
-	struct hid_sensor_hub_device *hsdev = time_state->common_attributes.hsdev;
+	struct hid_subdevice *hsdev = time_state->hsdev;
 	static uint8_t raw_time[7] = { 0 };
 
 	raw_time[0] = report_id & 0xFF;
@@ -287,7 +279,7 @@ int hid_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 
 	struct hid_time_state *time_state = dev_get_drvdata(dev);
 	int report_id = time_state->info[0].report_id;
-	struct hid_sensor_hub_device *hsdev = time_state->common_attributes.hsdev;
+	struct hid_subdevice *hsdev = time_state->hsdev;
 	static uint8_t raw_time[8] = { 0 };
 	struct rtc_time *time = (struct rtc_time *)&alarm->time;
 
@@ -357,12 +349,13 @@ static const struct hid_time_data_t rtc_data = {
 static int hid_time_probe(struct platform_device *pdev)
 {
 	int ret = 0;
-	struct hid_sensor_hub_device *hsdev = dev_get_platdata(&pdev->dev);
+	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
 	const struct platform_device_id *id = platform_get_device_id(pdev);
-	struct hid_time_state *time_state = devm_kzalloc(&pdev->dev,
-		sizeof(struct hid_time_state), GFP_KERNEL);
+	struct hid_time_state *time_state; 
 	struct hid_time_data_t *drv_data;
 
+	time_state = devm_kzalloc(&pdev->dev,
+		sizeof(struct hid_time_state), GFP_KERNEL);
 	if (time_state == NULL || id == NULL)
 		return -ENOMEM;
 
@@ -371,19 +364,8 @@ static int hid_time_probe(struct platform_device *pdev)
 
 	spin_lock_init(&time_state->lock_last_time);
 	init_completion(&time_state->comp_last_time);
-	time_state->common_attributes.hsdev = hsdev;
-	time_state->common_attributes.pdev = pdev;
-
-	ret = hid_sensor_parse_common_attributes(hsdev,
-				drv_data->hid_usage,
-				&time_state->common_attributes,
-				NULL,
-				0);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to setup common attributes!\n");
-		return ret;
-	}
-
+	time_state->hsdev = hsdev;
+	
 	ret = hid_time_parse_report(pdev, hsdev, drv_data->hid_usage,
 					time_state);
 	if (ret) {
@@ -395,14 +377,14 @@ static int hid_time_probe(struct platform_device *pdev)
 	time_state->callbacks.send_event = hid_time_proc_event;
 	time_state->callbacks.capture_sample = hid_time_capture_sample;
 	time_state->callbacks.pdev = pdev;
-	ret = sensor_hub_register_callback(hsdev, drv_data->hid_usage,
+	ret = hid_composite_register_callback(hsdev, drv_data->hid_usage,
 					&time_state->callbacks);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "register callback failed!\n");
 		return ret;
 	}
 
-	ret = sensor_hub_device_open(hsdev);
+	ret = hid_composite_device_open(hsdev);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to open sensor hub device!\n");
 		goto err_open;
@@ -427,24 +409,24 @@ static int hid_time_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "rtc device register failed!\n");
 		goto err_rtc;
 	}
-
+	
 	return ret;
 
 err_rtc:
-	sensor_hub_device_close(hsdev);
+	hid_composite_device_close(hsdev);
 err_open:
-	sensor_hub_remove_callback(hsdev, drv_data->hid_usage);
+	hid_composite_remove_callback(hsdev, drv_data->hid_usage);
 	return ret;
 }
 
 static int hid_time_remove(struct platform_device *pdev)
 {
-	struct hid_sensor_hub_device *hsdev = dev_get_platdata(&pdev->dev);
+	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
 	const struct platform_device_id *id = platform_get_device_id(pdev);
 	struct hid_time_data_t *drv_data = (struct hid_time_data_t *)id->driver_data;
 
-	sensor_hub_device_close(hsdev);
-	sensor_hub_remove_callback(hsdev, drv_data->hid_usage);
+	hid_composite_device_close(hsdev);
+	hid_composite_remove_callback(hsdev, drv_data->hid_usage);
 
 	return 0;
 }
@@ -452,17 +434,17 @@ static int hid_time_remove(struct platform_device *pdev)
 static const struct platform_device_id hid_time_ids[] = {
 	{
 		/* Format: HID-SENSOR-usage_id_in_hex_lowercase */
-		.name = "HID-SENSOR-2000a0",
+		.name = "HID-COMPOSITE-2000a0",
 		.driver_data = (kernel_ulong_t)&time_data,
 	},
 	{
 		/* Format: HID-SENSOR-usage_id_in_hex_lowercase */
-		.name = "HID-SENSOR-2000a1",
+		.name = "HID-COMPOSITE-2000a1",
 		.driver_data = (kernel_ulong_t)&alarm_data,
 	},
 	{
 		/* Format: HID-SENSOR-usage_id_in_hex_lowercase */
-		.name = "HID-SENSOR-2000a2",
+		.name = "HID-COMPOSITE-2000a2",
 		.driver_data = (kernel_ulong_t)&rtc_data,
 	},
 	{ /* sentinel */ }

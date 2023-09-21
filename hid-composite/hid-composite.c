@@ -276,7 +276,7 @@ done_proc:
 }
 EXPORT_SYMBOL_GPL(hid_composite_set_feature);
 
-int hid_composite_get_feature(struct hid_composite_device *hsdev, u32 report_id,
+int hid_composite_get_feature(struct hid_subdevice *hsdev, u32 report_id,
 			   u32 field_index, int buffer_size, void *buffer)
 {
 	struct hid_report *report;
@@ -532,6 +532,51 @@ static int hid_composite_get_physical_device_count(struct hid_device *hdev)
 	return count;
 }
 
+
+#ifdef CONFIG_PM
+static int hid_composite_suspend(struct hid_device *hdev, pm_message_t message)
+{
+	struct hid_composite_device *cdev = hid_get_drvdata(hdev);
+	struct hid_composite_callbacks_list *callback;
+	unsigned long flags;
+
+	hid_dbg(hdev, " sensor_hub_suspend\n");
+	spin_lock_irqsave(&cdev->dyn_callback_lock, flags);
+	list_for_each_entry(callback, &cdev->dyn_callback_list, list) {
+		if (callback->usage_callback->suspend)
+			callback->usage_callback->suspend(
+					callback->hsdev, callback->priv);
+	}
+	spin_unlock_irqrestore(&cdev->dyn_callback_lock, flags);
+
+	return 0;
+}
+
+static int hid_composite_resume(struct hid_device *hdev)
+{
+	struct hid_composite_device *cdev = hid_get_drvdata(hdev);
+	struct hid_composite_callbacks_list *callback;
+	unsigned long flags;
+
+	hid_dbg(hdev, " sensor_hub_resume\n");
+	spin_lock_irqsave(&cdev->dyn_callback_lock, flags);
+	list_for_each_entry(callback, &cdev->dyn_callback_list, list) {
+		if (callback->usage_callback->resume)
+			callback->usage_callback->resume(
+					callback->hsdev, callback->priv);
+	}
+	spin_unlock_irqrestore(&cdev->dyn_callback_lock, flags);
+
+	return 0;
+}
+
+static int hid_composite_reset_resume(struct hid_device *hdev)
+{
+	return 0;
+}
+#endif
+
+
 /**
  * @brief 
  * 
@@ -542,7 +587,6 @@ static int hid_composite_get_physical_device_count(struct hid_device *hdev)
 static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	struct hid_composite_device *ldev;
-	unsigned int minor;
 	int ret, i, dev_cnt;
 	struct hid_subdevice *hsdev = NULL, *last_hsdev = NULL, *collection_hsdev = NULL;
 	char *name;
@@ -559,11 +603,17 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 
 	ldev->hdev = hdev;
 	mutex_init(&ldev->mutex);
+	spin_lock_init(&ldev->dyn_callback_lock);
 	spin_lock_init(&ldev->lock);
+	
+	INIT_LIST_HEAD(&hdev->inputs);
 
 	ret = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
 	if (ret)
 		return ret;
+	
+	INIT_LIST_HEAD(&ldev->dyn_callback_list);
+	ldev->hid_composite_client_cnt = 0;
 
 	dev_cnt = hid_composite_get_physical_device_count(hdev);
 	if (dev_cnt > 0xFFU) {
@@ -580,8 +630,6 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 		ret = -ENOMEM;
 		goto err_stop_hw;
 	}
-
-	minor = ((struct hidraw *) hdev->hidraw)->minor;
 
 	for (i = 1; i < hdev->maxcollection; ++i) {
 		
@@ -702,6 +750,11 @@ static struct hid_driver hid_composite_driver = {
 	.remove = hid_composite_remove,
 	.id_table = hid_composite_table,
 	.raw_event = hid_composite_raw_event,
+#ifdef CONFIG_PM
+	.suspend = hid_composite_suspend,
+	.resume = hid_composite_resume,
+	.reset_resume = hid_composite_reset_resume,
+#endif
 };
 
 module_hid_driver(hid_composite_driver);

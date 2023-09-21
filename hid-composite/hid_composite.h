@@ -86,4 +86,19 @@ int hid_composite_get_attribute_info(struct hid_subdevice *hsdev,
 				u32 usage_id,
 				u32 attr_usage_id,
 				struct hid_attribute_info *info);
+int hid_composite_get_feature(struct hid_subdevice *hsdev, u32 report_id,
+			   u32 field_index, int buffer_size, void *buffer);
+int hid_composite_set_feature(struct hid_subdevice *hsdev, u32 report_id,
+			   u32 field_index, int buffer_size, void *buffer);
+int hid_composite_remove_callback(struct hid_subdevice *hsdev,
+				u32 usage_id);
+int hid_composite_register_callback(struct hid_subdevice *hsdev,
+			u32 usage_id,
+			struct hid_composite_callbacks *usage_callback);
+int hid_composite_input_attr_get_raw_value(struct hid_subdevice *hsdev,
+					u32 usage_id,
+					u32 attr_usage_id, u32 report_id,
+					enum hid_composite_read_flags flag,
+					bool is_signed);
+
 #endif /* __HID_COMPOSITE_H__ */
