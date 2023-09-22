@@ -719,6 +719,7 @@ err_stop_hw:
 static void hid_composite_remove(struct hid_device *hdev)
 {
 	struct hid_composite_device *cdev = hid_get_drvdata(hdev);
+	struct hid_subdevice *hsdev;
 	unsigned long flags;
 	int i;
 
@@ -727,8 +728,7 @@ static void hid_composite_remove(struct hid_device *hdev)
 
 	spin_lock_irqsave(&cdev->lock, flags);
 	for (i = 0; i < cdev->hid_composite_client_cnt; ++i) {
-		struct hid_subdevice *hsdev =
-			cdev->hid_composite_client_devs[i].platform_data;
+		hsdev = cdev->hid_composite_client_devs[i].platform_data;
 		if (hsdev->pending.status)
 			complete(&hsdev->pending.ready);
 	}
