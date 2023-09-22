@@ -57,7 +57,11 @@ static const struct hid_sbs_property_usage sbs_battery_prop_usages[] = {
 
 static const struct hid_sbs_property_usage sbs_charger_prop_usages[] = {
 	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_STATUS, HID_SBS_SMART_BATTERY_CHARGER_STATUS, 0),
-	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_PRESENT, HID_SBS_SMART_BATTERY_CHARGER_STATUS, 1),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_PRESENT, HID_SBS_SMART_BATTERY_SELECTOR_STATE, 1),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_ONLINE, HID_SBS_SMART_BATTERY_SELECTOR_STATE, 1),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_HEALTH, HID_SBS_SMART_BATTERY_CHARGER_STATUS, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, HID_SBS_CHARGER_CHARGING_CURRENT, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE, HID_SBS_CHARGER_CHARGING_VOLTAGE, 0),
 };
 
 
@@ -109,7 +113,7 @@ enum power_supply_property hid_battery_charger_properties[] = {
 
 
 
-static inline int psp_to_usage_index(enum power_supply_property psp) {
+static inline int battery_psp_to_usage_index(enum power_supply_property psp) {
 	int i = 0;
 	for (i = 0; i < ARRAY_SIZE(sbs_battery_prop_usages); ++i)
 		if (sbs_battery_prop_usages[i].psp == psp)
@@ -118,6 +122,15 @@ static inline int psp_to_usage_index(enum power_supply_property psp) {
 	return -1;
 }
 
+
+static inline int charger_psp_to_usage_index(enum power_supply_property psp) {
+	int i = 0;
+	for (i = 0; i < ARRAY_SIZE(sbs_charger_prop_usages); ++i)
+		if (sbs_charger_prop_usages[i].psp == psp)
+			return i;
+	
+	return -1;
+}
 
 static inline int capacity_to_capacity_level(int capacity)
 {
@@ -137,7 +150,7 @@ static int hid_battery_get_usage_value(struct hid_device *hdev, enum power_suppl
 	struct hid_field *field;
 	int i, j;
 	unsigned int count = 0;
-	int index_val = psp_to_usage_index(psp);
+	int index_val = battery_psp_to_usage_index(psp);
 
 	list_for_each_entry(report,
 			    &hdev->report_enum[HID_INPUT_REPORT].report_list,
@@ -173,7 +186,7 @@ static int hid_battery_get_property(struct power_supply *psy,
 					union power_supply_propval *val)
 {
 	//struct hid_battery *bat = power_supply_get_drvdata(psy);
-	int psp_idx = psp_to_usage_index(psp);
+	int psp_idx = battery_psp_to_usage_index(psp);
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_MODEL_NAME:
@@ -182,7 +195,7 @@ static int hid_battery_get_property(struct power_supply *psy,
 			val->strval = "Unkown";
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
-		psp_idx = psp_to_usage_index(POWER_SUPPLY_PROP_CAPACITY_LEVEL);
+		psp_idx = battery_psp_to_usage_index(POWER_SUPPLY_PROP_CAPACITY_LEVEL);
 		if (psp_idx < 0)
 			val->intval = 0;
 		else	
