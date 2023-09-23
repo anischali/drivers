@@ -151,6 +151,20 @@ static inline int charger_psp_to_usage_index(enum power_supply_property psp) {
 	return -1;
 }
 
+static inline bool hid_battery_has_usage(struct hid_battery_usage_info *usages, size_t size, struct hid_attribute_info *info)
+{
+	int i = 0;
+	for (i = 0; i < size; ++i)
+	{
+		if (usages[i].info.attrib_id == info->attrib_id && 
+			usages[i].info.report_id == info->report_id)
+			return true;
+	}
+
+	return false;
+}
+
+
 static inline int capacity_to_capacity_level(int capacity)
 {
 	return 	capacity >= 90 ? POWER_SUPPLY_CAPACITY_LEVEL_FULL :
@@ -376,6 +390,7 @@ static size_t hid_battery_usages_count(struct hid_battery *battery,
 
 static void hid_battery_get_available_usages(struct hid_battery *battery)
 {
+	struct hid_attribute_info info;
 	int i, ret, cnt = 0;
 	struct hid_subdevice *hsdev = battery->hsdev;
 	if (battery->has_battery)
@@ -386,13 +401,19 @@ static void hid_battery_get_available_usages(struct hid_battery *battery)
 				HID_INPUT_REPORT, 
 				HID_SBS_BATTERY_SYSTEM_USAGE,
 				sbs_battery_prop_usages[i].usage, 
-				&battery->battery_data[cnt].info);
-			if (!ret) {
-				battery->battery_data[cnt].pusage = (struct hid_sbs_property_usage *)&sbs_battery_prop_usages[i];
-				hid_info(hsdev->hdev, "charger: usage: 0x%08x\n", battery->battery_data[cnt].info.usage_id);
+				&info);
+			if (!ret && 
+				!hid_battery_has_usage(battery->battery_data, 
+				battery->battery_data_size, &info)) {
+				
+				memcpy(&battery->battery_data[cnt].info, 
+					&info, sizeof(struct hid_attribute_info));
+				battery->battery_data[cnt].pusage = 
+						(struct hid_sbs_property_usage *)&sbs_battery_prop_usages[i];
 				++cnt;
 			}
 		}
+		battery->battery_data_size = cnt;
 	}
 	if (battery->has_charger)
 	{
@@ -403,13 +424,19 @@ static void hid_battery_get_available_usages(struct hid_battery *battery)
 				HID_INPUT_REPORT, 
 				HID_SBS_BATTERY_SYSTEM_USAGE,
 				sbs_charger_prop_usages[i].usage, 
-				&battery->charger_data[cnt].info);
-			if (!ret) {
-				battery->charger_data[cnt].pusage = (struct hid_sbs_property_usage *)&sbs_charger_prop_usages[i];
-				hid_info(hsdev->hdev, "charger: usage: 0x%08x\n", battery->charger_data[cnt].info.usage_id);
+				&info);
+			if (!ret && 
+				!hid_battery_has_usage(battery->charger_data, 
+				battery->charger_data_size, &info)) {
+				
+				memcpy(&battery->charger_data[cnt].info, &info, 
+						sizeof(struct hid_attribute_info));
+				battery->charger_data[cnt].pusage = 
+						(struct hid_sbs_property_usage *)&sbs_charger_prop_usages[i];
 				++cnt;
 			}
 		}
+		battery->charger_data_size = cnt;
 	}
 }
 
@@ -504,6 +531,9 @@ static int hid_battery_probe(struct platform_device *pdev)
 
 	hid_battery_get_available_usages(bat);
 
+	hid_dbg(hsdev->hdev, 
+		"battery implemented usages props: %ld charger implemented usages props: %ld\n", 
+		bat->battery_data_size, bat->charger_data_size);
 	return 0;
 cleanup:
 	hid_device_io_stop(hsdev->hdev);
