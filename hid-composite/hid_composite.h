@@ -102,4 +102,18 @@ int hid_composite_input_attr_get_raw_value(struct hid_subdevice *hsdev,
 					enum hid_composite_read_flags flag,
 					bool is_signed);
 
+
+static inline u32 hid_composite_value(size_t raw_len, char *raw_data)
+{
+	switch (raw_len) {
+	case 1:
+		return *(u8 *)raw_data;
+	case 2:
+		return *(u16 *)raw_data;
+	case 4:
+		return *(u32 *)raw_data;
+	default:
+		return (u32)(~0U); /* 0xff... or -1 to denote an error */
+	}
+}
 #endif /* __HID_COMPOSITE_H__ */

@@ -6,6 +6,7 @@
  * based on drivers/power/supply/jz4740-battery.c
  */
 
+#include <asm-generic/errno-base.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
@@ -44,6 +45,8 @@ struct hid_battery {
 	struct hid_composite_callbacks callbacks;
 	struct hid_battery_usage_info *battery_data;
 	struct hid_battery_usage_info *charger_data;
+	spinlock_t data_lock;
+	struct completion data_completion;
 	size_t battery_data_size;
 	size_t charger_data_size;
 	bool has_battery;
@@ -151,17 +154,18 @@ static inline int charger_psp_to_usage_index(enum power_supply_property psp) {
 	return -1;
 }
 
-static inline bool hid_battery_has_usage(struct hid_battery_usage_info *usages, size_t size, struct hid_attribute_info *info)
+static inline struct hid_battery_usage_info * 
+hid_battery_get_usage(struct hid_battery_usage_info *usages, 
+			size_t size, uint32_t attrib_id)
 {
 	int i = 0;
 	for (i = 0; i < size; ++i)
 	{
-		if (usages[i].info.attrib_id == info->attrib_id && 
-			usages[i].info.report_id == info->report_id)
-			return true;
+		if (usages[i].info.attrib_id == attrib_id)
+			return &usages[i];
 	}
 
-	return false;
+	return NULL;
 }
 
 
@@ -176,75 +180,58 @@ static inline int capacity_to_capacity_level(int capacity)
 
 }		
 
-/*
-static int hid_battery_get_usage_value(struct hid_device *hdev, enum power_supply_property psp)
-{
-	struct hid_report *report;
-	struct hid_field *field;
-	int i, j;
-	unsigned int count = 0;
-	int index_val = battery_psp_to_usage_index(psp);
-
-	list_for_each_entry(report,
-			    &hdev->report_enum[HID_INPUT_REPORT].report_list,
-			    list) {
-		for (i = 0; i < report->maxfield; i++) {
-			field = report->field[i];
-			if (field->application == HID_SBS_BATTERY_SYSTEM_USAGE)
-			{
-				count += field->maxusage;
-				for (j = 0; j < field->maxusage; ++j)
-				{
-					hid_info(hdev, "usage: 0x%08x (size: %d count: %d)\n", field->usage[j].hid, field->report_size, field->report_size);
-				}
-			}
-		}
-	}
-
-	hid_info(hdev, "count: %d\n", count);
-	return count;
-}
-
-static int hid_battery_get_property_from_hid_usage(struct hid_battery *bat,
-													enum hid_battery_system_usage usage, 
-													union power_supply_propval *val)
-{	
-	return 0;
-}
-
-*/
-
 static int hid_battery_get_property(struct power_supply *psy,
 					enum power_supply_property psp,
 					union power_supply_propval *val)
 {
-	//struct hid_battery *bat = power_supply_get_drvdata(psy);
+	struct hid_battery *bat = power_supply_get_drvdata(psy);
+	struct hid_battery_usage_info *usage;
 	int psp_idx = battery_psp_to_usage_index(psp);
+	unsigned long flags;
+	int ret;
 
-	switch (psp) {
-	case POWER_SUPPLY_PROP_MODEL_NAME:
-	case POWER_SUPPLY_PROP_MANUFACTURER:
-		if (psp_idx < 0)
+	if (psp_idx < 0 || psp_idx >= ARRAY_SIZE(sbs_battery_prop_usages))
+		return -EINVAL;
+
+	
+	reinit_completion(&bat->data_completion);
+	/* get a report with all values through requesting one value */
+	hid_composite_input_attr_get_raw_value(bat->hsdev,
+			HID_SBS_BATTERY_SYSTEM_USAGE, 
+			sbs_battery_prop_usages[psp_idx].usage,
+			bat->battery_data[0].info.report_id, HID_COMPOSITE_SYNC, false);
+	
+	usage = hid_battery_get_usage(bat->battery_data, 
+				bat->battery_data_size, sbs_battery_prop_usages[psp_idx].usage);
+	ret = wait_for_completion_killable_timeout(
+			&bat->data_completion, msecs_to_jiffies(5000));
+	if (ret > 0) {
+		/* no error */
+		if (!usage)
+			return -EINVAL;
+
+		spin_lock_irqsave(&bat->data_lock, flags);
+
+		switch (psp) {
+		case POWER_SUPPLY_PROP_MODEL_NAME:
+		case POWER_SUPPLY_PROP_MANUFACTURER:
 			val->strval = "Unkown";
-		break;
-	case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
-		psp_idx = battery_psp_to_usage_index(POWER_SUPPLY_PROP_CAPACITY_LEVEL);
-		if (psp_idx < 0)
-			val->intval = 0;
-		else	
-			val->intval = capacity_to_capacity_level(sbs_battery_prop_usages[psp_idx].default_value);
-		break;
-	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
-		val->strval = "0000000";
-		break;
-	default:
-		if (psp_idx < 0 || psp_idx >= ARRAY_SIZE(sbs_battery_prop_usages))
-			val->intval = 0;
-		else
-			val->intval = sbs_battery_prop_usages[psp_idx].default_value;
-		break;
+			break;
+		case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
+			val->intval = capacity_to_capacity_level(usage->value.intval);
+			break;
+		case POWER_SUPPLY_PROP_SERIAL_NUMBER:
+			val->strval = "0000000";
+			break;
+		default:
+			val->intval = usage->value.intval;
+		}
+
+		spin_unlock_irqrestore(&bat->data_lock, flags);
+		return 0;
 	}
-	return 0;
+
+	return -EINVAL;
 }
 
 
@@ -253,46 +240,44 @@ static int hid_battery_charger_get_property(struct power_supply *psy,
 					enum power_supply_property psp,
 					union power_supply_propval *val)
 {
-	switch (psp) {
-	case POWER_SUPPLY_PROP_PRESENT:
-	case POWER_SUPPLY_PROP_ONLINE:
-		val->intval = 1;
-		break;
-	default:
-	}
-	return 0;
-}
+	struct hid_battery *bat = power_supply_get_drvdata(psy);
+	struct hid_battery_usage_info *usage;
+	int psp_idx = charger_psp_to_usage_index(psp);
+	unsigned long flags;
+	int ret;
 
+	if (psp_idx < 0 || psp_idx >= ARRAY_SIZE(sbs_charger_prop_usages))
+		return -EINVAL;
 
-/*
-static int hid_battery_report_size(struct hid_device *hdev)
-{
-	struct hid_report *report;
-	struct hid_field *field;
-	int i, j;
-	unsigned int count = 0;
+	
+	reinit_completion(&bat->data_completion);
+	hid_composite_input_attr_get_raw_value(bat->hsdev,
+			HID_SBS_BATTERY_SYSTEM_USAGE, 
+			sbs_charger_prop_usages[psp_idx].usage,
+			bat->charger_data[0].info.report_id, HID_COMPOSITE_SYNC, false);
+	
+	usage = hid_battery_get_usage(bat->charger_data, 
+				bat->charger_data_size, sbs_charger_prop_usages[psp_idx].usage);
+	ret = wait_for_completion_killable_timeout(
+			&bat->data_completion, msecs_to_jiffies(5000));
+	if (ret > 0) {
+		/* no error */
+		if (!usage)
+			return -EINVAL;
 
-	list_for_each_entry(report,
-			    &hdev->report_enum[HID_INPUT_REPORT].report_list,
-			    list) {
-		for (i = 0; i < report->maxfield; i++) {
-			field = report->field[i];
-			if (field->application == HID_SBS_BATTERY_SYSTEM_USAGE)
-			{
-				count += field->maxusage;
-				for (j = 0; j < field->maxusage; ++j)
-				{
-					hid_info(hdev, "usage: 0x%08x (size: %d count: %d)\n", field->usage[j].hid, field->report_size, field->report_count);
-				}
-			}
+		spin_lock_irqsave(&bat->data_lock, flags);
+		switch (psp) {
+		case POWER_SUPPLY_PROP_PRESENT:
+		case POWER_SUPPLY_PROP_ONLINE:
+			val->intval = 1;
+			break;
+		default:
 		}
+		spin_unlock_irqrestore(&bat->data_lock, flags);
+		return 0;
 	}
-
-	hid_info(hdev, "count: %d\n", count);
-	return count;
+	return -EINVAL;
 }
-
-*/
 
 
 static const struct power_supply_desc hid_battery_desc = {
@@ -403,8 +388,8 @@ static void hid_battery_get_available_usages(struct hid_battery *battery)
 				sbs_battery_prop_usages[i].usage, 
 				&info);
 			if (!ret && 
-				!hid_battery_has_usage(battery->battery_data, 
-				battery->battery_data_size, &info)) {
+				!hid_battery_get_usage(battery->battery_data, 
+				battery->battery_data_size, info.attrib_id)) {
 				
 				memcpy(&battery->battery_data[cnt].info, 
 					&info, sizeof(struct hid_attribute_info));
@@ -426,8 +411,8 @@ static void hid_battery_get_available_usages(struct hid_battery *battery)
 				sbs_charger_prop_usages[i].usage, 
 				&info);
 			if (!ret && 
-				!hid_battery_has_usage(battery->charger_data, 
-				battery->charger_data_size, &info)) {
+				!hid_battery_get_usage(battery->charger_data, 
+				battery->charger_data_size, info.attrib_id)) {
 				
 				memcpy(&battery->charger_data[cnt].info, &info, 
 						sizeof(struct hid_attribute_info));
@@ -439,6 +424,44 @@ static void hid_battery_get_available_usages(struct hid_battery *battery)
 		battery->charger_data_size = cnt;
 	}
 }
+
+
+static int hid_battery_capture_sample(struct hid_subdevice *hsdev,
+			u32 usage_id, size_t raw_len, char *raw_data,
+			void *priv)
+{
+	struct hid_battery *bat = platform_get_drvdata(priv);
+	struct hid_battery_usage_info *usage;
+
+	usage = hid_battery_get_usage(bat->battery_data, 
+			bat->battery_data_size, usage_id);
+	if (usage)
+	{	
+		usage->value.intval = hid_composite_value(raw_len, raw_data);
+		return 0;
+	}
+
+	usage = hid_battery_get_usage(bat->charger_data, 
+			bat->charger_data_size, usage_id);
+	if (usage)
+	{	
+		usage->value.intval = hid_composite_value(raw_len, raw_data);
+		return 0;
+	}	
+
+	return -EINVAL;
+}
+
+
+static int hid_battery_proc_event(struct hid_subdevice *hsdev, u32 usage_id,
+			 void *priv)
+{
+	struct hid_battery *bat = platform_get_drvdata(priv);
+	complete(&bat->data_completion);
+	return 0;
+}
+
+
 
 static int hid_battery_add_power_supply(struct platform_device *pdev, 
 				struct power_supply **ps, const struct power_supply_desc *desc)
@@ -487,9 +510,18 @@ static int hid_battery_probe(struct platform_device *pdev)
 
 	hid_device_io_start(hsdev->hdev);
 
+	spin_lock_init(&bat->data_lock);
+	init_completion(&bat->data_completion);
+	
 	bat->hsdev = hsdev;
 	bat->has_charger = hsdev_has_charger(hsdev);
 	bat->has_battery = hsdev_has_battery(hsdev);
+
+	bat->callbacks.capture_sample = hid_battery_capture_sample;
+	bat->callbacks.send_event = hid_battery_proc_event;
+	bat->callbacks.pdev = pdev;
+	hid_composite_register_callback(hsdev, 
+		HID_SBS_BATTERY_SYSTEM_USAGE, &bat->callbacks);
 
 	if (bat->has_battery)
 	{
@@ -536,6 +568,7 @@ static int hid_battery_probe(struct platform_device *pdev)
 		bat->battery_data_size, bat->charger_data_size);
 	return 0;
 cleanup:
+	hid_composite_remove_callback(hsdev, HID_SBS_BATTERY_SYSTEM_USAGE);
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
 
@@ -547,6 +580,7 @@ static int hid_battery_remove(struct platform_device *pdev)
 {
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);	
 
+	hid_composite_remove_callback(hsdev, HID_SBS_BATTERY_SYSTEM_USAGE);
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
 	return 0;
