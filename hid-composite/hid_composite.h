@@ -34,6 +34,7 @@ struct hid_subdevice_pending {
  */
 struct hid_attribute_info {
 	u32 usage_id;
+	u32 report_type;
 	u32 attrib_id;
 	s32 report_id;
 	s32 index;

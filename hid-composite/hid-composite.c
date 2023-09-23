@@ -79,6 +79,7 @@ static void hid_composite_fill_attr_info(
 	info->size = (field->report_size * field->report_count)/8;
 	info->logical_minimum = field->logical_minimum;
 	info->logical_maximum = field->logical_maximum;
+	info->report_type = field->report_type;
 }
 
 /**
