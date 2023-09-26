@@ -424,6 +424,7 @@ static int hid_time_remove(struct platform_device *pdev)
 	const struct platform_device_id *id = platform_get_device_id(pdev);
 	struct hid_time_data_t *drv_data = (struct hid_time_data_t *)id->driver_data;
 
+	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
 	hid_composite_remove_callback(hsdev, drv_data->hid_usage);
 
