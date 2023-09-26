@@ -15,6 +15,7 @@
 #include "hid_composite.h"
 #include "hid-battery-system.h"
 
+static int instance = 0;
 
 #define HID_SBS_PROPERTY_USAGE(_psp, _usage, _default_value) { \
 	.psp = _psp, \
@@ -509,7 +510,7 @@ static int hid_battery_allocate_battery(struct platform_device *pdev)
 	if (ret)
 		return ret;
 	
-	snprintf(name, 32, "hid-battery-%s", dev_name(&pdev->dev));
+	snprintf(name, 32, "hid-battery-%d", instance);
 	bat->battery_desc.name = name;
 	bat->battery_desc.type = POWER_SUPPLY_TYPE_BATTERY;
 	bat->battery_desc.get_property = hid_battery_get_property;
@@ -547,7 +548,7 @@ static int hid_battery_allocate_charger(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	snprintf(name, 32, "hid-charger-%s", dev_name(&pdev->dev));
+	snprintf(name, 32, "hid-charger-%d", instance);
 	bat->charger_desc.name = name;
 	bat->charger_desc.type = POWER_SUPPLY_TYPE_MAINS,
 	bat->charger_desc.get_property = hid_battery_charger_get_property,
@@ -610,6 +611,9 @@ static int hid_battery_probe(struct platform_device *pdev)
 	hid_info(hsdev->hdev, 
 		"battery implemented usages props: %ld charger implemented usages props: %ld\n", 
 		bat->battery_data_size, bat->charger_data_size);
+	
+	++instance;
+
 	return 0;
 
 
