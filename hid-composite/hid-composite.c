@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Simple USB RGB LED driver
+ * HID Composite driver
  *
- * Copyright 2016 Heiner Kallweit <hkallweit1@gmail.com>
- * Based on drivers/hid/hid-thingm.c and
- * drivers/usb/misc/usbled.c
+ * Copyright 2023 Anis CHALI <anis.chali1@outlook.com>
+ * Inspired from drivers/hid/hid-sensor-hub.c
  */
-
 #include <linux/hid.h>
 #include <linux/hidraw.h>
 #include <linux/module.h>
@@ -740,7 +738,7 @@ static void hid_composite_remove(struct hid_device *hdev)
 
 
 static const struct hid_device_id hid_composite_table[] = {
-    { HID_USB_DEVICE(0x18C9, 0x1044)},
+	{ HID_DEVICE(HID_BUS_ANY, HID_GROUP_COMPOSITE, HID_ANY_ID, HID_ANY_ID)},
 	{ }
 };
 MODULE_DEVICE_TABLE(hid, hid_composite_table);
@@ -762,4 +760,4 @@ module_hid_driver(hid_composite_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
-MODULE_DESCRIPTION("USB HID Composite bridge driver");
+MODULE_DESCRIPTION("USB HID Composite driver");

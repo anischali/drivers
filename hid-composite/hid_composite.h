@@ -3,6 +3,11 @@
 #include <linux/hid.h>
 #include <linux/hidraw.h>
 
+#define USB_SUBCLASS_HID_COMPOSITE 0x02U
+#ifndef HID_GROUP_COMPOSITE
+#define HID_GROUP_COMPOSITE 0x0005U
+#endif
+
 enum hid_composite_read_flags {
 	HID_COMPOSITE_SYNC,
 	HID_COMPOSITE_ASYNC,
