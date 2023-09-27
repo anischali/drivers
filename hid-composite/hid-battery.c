@@ -299,16 +299,19 @@ static inline int hid_battery_allocate_properties(
 		size_t length)
 {
 	int i = 0;
+	enum power_supply_property *props;
 	
-	*properties = devm_kcalloc(&pdev->dev, length, 
+	props = devm_kcalloc(&pdev->dev, length, 
 			sizeof(enum power_supply_property), GFP_KERNEL);
-	if (*properties == NULL)
+	if (props == NULL)
 		return -ENOMEM;
 
 	for (i = 0; i < length; i++)
 	{
-		*properties[i] = usages[i].pusage->psp;
+		props[i] = usages[i].pusage->psp;
 	}
+
+	*properties = props;
 
 	return 0;
 }
@@ -396,6 +399,7 @@ static void hid_battery_get_available_usages(struct hid_battery *battery,
 	struct hid_attribute_info info;
 	int i, ret, cnt = 0;
 	struct hid_subdevice *hsdev = battery->hsdev;
+
 	for (i = 0; i < props_len && 
 		cnt < *ps_info_len; ++i) {
 		ret = hid_composite_get_attribute_info(hsdev, 
@@ -403,10 +407,8 @@ static void hid_battery_get_available_usages(struct hid_battery *battery,
 			HID_SBS_BATTERY_SYSTEM_USAGE,
 			props[i].usage, 
 			&info);
-		if (!ret && 
-			!hid_battery_get_usage(ps_info, 
-			*ps_info_len, info.attrib_id)) {
 			
+		if (!ret) {
 			memcpy(&ps_info[cnt].info, 
 				&info, sizeof(struct hid_attribute_info));
 			ps_info[cnt].pusage = 
@@ -486,7 +488,8 @@ static int hid_battery_add_power_supply(struct platform_device *pdev,
 
 static int hid_battery_allocate_battery(struct platform_device *pdev)
 {
-	struct hid_battery *bat = (struct hid_battery *)platform_get_drvdata(pdev);
+	struct hid_battery *bat = platform_get_drvdata(pdev);
+	struct hid_subdevice *hsdev = bat->hsdev;
 	char name[32];
 	int ret;
 
@@ -504,11 +507,17 @@ static int hid_battery_allocate_battery(struct platform_device *pdev)
 				&bat->battery_data_size, sbs_battery_prop_usages, 
 				ARRAY_SIZE(sbs_battery_prop_usages));
 
+	hid_info(hsdev->hdev, "pdev: %p bat: %p bat->battery_data: %p", 
+				pdev, bat, bat->battery_data);
+	
 	ret = hid_battery_allocate_properties(pdev, 
 			bat->battery_data, &bat->battery_properties, 
 			bat->battery_data_size);
 	if (ret)
 		return ret;
+	
+	hid_info(hsdev->hdev, "pdev: %p bat: %p bat->battery_data: %p", 
+				pdev, bat, bat->battery_data);
 	
 	snprintf(name, 32, "hid-battery-%d", instance);
 	bat->battery_desc.name = name;
@@ -524,7 +533,7 @@ static int hid_battery_allocate_battery(struct platform_device *pdev)
 
 static int hid_battery_allocate_charger(struct platform_device *pdev)
 {
-	struct hid_battery *bat = (struct hid_battery *)platform_get_drvdata(pdev);
+	struct hid_battery *bat = platform_get_drvdata(pdev);
 	char name[32];
 	int ret;
 
@@ -537,7 +546,7 @@ static int hid_battery_allocate_charger(struct platform_device *pdev)
 				 sizeof(struct hid_battery_usage_info), GFP_KERNEL);
 	if (!bat->charger_data)
 		return -ENOMEM;
-			
+	
 	hid_battery_get_available_usages(bat, bat->charger_data, 
 				&bat->charger_data_size, sbs_charger_prop_usages, 
 				ARRAY_SIZE(sbs_charger_prop_usages));
@@ -573,8 +582,6 @@ static int hid_battery_probe(struct platform_device *pdev)
 	if (!bat)
 		return -ENOMEM;
 
-	platform_set_drvdata(pdev, bat);
-
 	ret = hid_composite_device_open(hsdev);
 	if (ret)
 		return ret;
@@ -594,17 +601,19 @@ static int hid_battery_probe(struct platform_device *pdev)
 	hid_composite_register_callback(hsdev, 
 		HID_SBS_BATTERY_SYSTEM_USAGE, &bat->callbacks);
 
+	platform_set_drvdata(pdev, bat);
+
 	if (bat->has_battery)
 	{
 		ret = hid_battery_allocate_battery(pdev);
-		if (ret || IS_ERR(bat->battery))
+		if (ret)
 			goto cleanup;
 	}
 
 	if (bat->has_charger)
 	{
 		ret = hid_battery_allocate_charger(pdev);
-		if (ret || IS_ERR(bat->battery))
+		if (ret)
 			goto cleanup;
 	}
 
@@ -615,7 +624,6 @@ static int hid_battery_probe(struct platform_device *pdev)
 	++instance;
 
 	return 0;
-
 
 cleanup:
 	hid_composite_remove_callback(hsdev, HID_SBS_BATTERY_SYSTEM_USAGE);
