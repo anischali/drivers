@@ -78,6 +78,8 @@ static void hid_composite_fill_attr_info(
 	info->logical_minimum = field->logical_minimum;
 	info->logical_maximum = field->logical_maximum;
 	info->report_type = field->report_type;
+	info->usage_hid = field->usage->hid;
+	info->usage_logical = field->logical;
 }
 
 /**
@@ -358,7 +360,7 @@ int hid_composite_input_attr_get_raw_value(struct hid_subdevice *hsdev,
 	}
 	mutex_lock(&cdev->mutex);
 	hid_hw_request(hsdev->hdev, report, HID_REQ_GET_REPORT);
-	mutex_unlock(&cdev->mutex);
+	mutex_unlock(&cdev->mutex);	
 	if (flag == HID_COMPOSITE_SYNC) {
 		wait_for_completion_interruptible_timeout(
 						&hsdev->pending.ready, HZ*5);
@@ -406,7 +408,8 @@ static int hid_composite_raw_event(struct hid_device *hdev,
 	struct hid_collection *collection = NULL;
 	void *priv = NULL;
 	struct hid_subdevice *hsdev = NULL;
-	
+	int usage_id = 0;
+
 	if (report->type != HID_INPUT_REPORT)
 		return 1;
 
@@ -417,8 +420,8 @@ static int hid_composite_raw_event(struct hid_device *hdev,
 	spin_lock_irqsave(&cdev->lock, flags);
 
 	for (i = 0; i < report->maxfield; ++i) {
-		hid_dbg(hdev, "%d collection_index:%x hid:%x sz:%x\n",
-				i, report->field[i]->usage->collection_index,
+		hid_dbg(hdev, "CP: (0x%08x) CA:(0x%08x) %d collection_index:%x hid:%x sz:%x\n",
+				report->field[i]->physical, report->field[i]->application, i, report->field[i]->usage->collection_index,
 				report->field[i]->usage->hid,
 				(report->field[i]->report_size *
 					report->field[i]->report_count)/8);
@@ -429,8 +432,10 @@ static int hid_composite_raw_event(struct hid_device *hdev,
 		hid_dbg(hdev, "collection->usage %x\n",
 					collection->usage);
 
+		usage_id = report->field[i]->physical > 0 ? report->field[i]->physical :
+								report->field[i]->application;
 		callback = hid_composite_get_callback(hdev,
-				report->field[i]->physical,
+				usage_id,
 				report->field[i]->usage[0].collection_index,
 				&hsdev, &priv);
 		if (!callback) {
@@ -739,7 +744,7 @@ static void hid_composite_remove(struct hid_device *hdev)
 
 static const struct hid_device_id hid_composite_table[] = {
 	{ HID_DEVICE(HID_BUS_ANY, HID_GROUP_COMPOSITE, HID_ANY_ID, HID_ANY_ID)},
-	{ }
+	{}
 };
 MODULE_DEVICE_TABLE(hid, hid_composite_table);
 

@@ -3,7 +3,9 @@
 #include <linux/hid.h>
 #include <linux/hidraw.h>
 
+#ifndef USB_SUBCLASS_HID_COMPOSITE
 #define USB_SUBCLASS_HID_COMPOSITE 0x02U
+#endif
 #ifndef HID_GROUP_COMPOSITE
 #define HID_GROUP_COMPOSITE 0x0005U
 #endif
@@ -48,6 +50,8 @@ struct hid_attribute_info {
 	s32 size;
 	s32 logical_minimum;
 	s32 logical_maximum;
+	s32 usage_hid;
+	s32 usage_logical;
 };
 
 struct hid_subdevice {
