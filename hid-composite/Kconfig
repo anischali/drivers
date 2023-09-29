@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+menu "HID Composite support"
+    depends on USB_HID
+
+config USB_HID_COMPOSITE
+    bool "USB HID Composite group"
+    depends on USB_HID && MFD_CORE
+    default n
+    help
+        The usb HID Composite is driver that adds an interface subclass to
+        the HID interface class to be able to use multiple HID usage pages
+        and have multiple drivers in multi function device manner.
+
+
+config USB_HID_COMPOSITE_DEBUG
+	bool "Debug symbols for hid-composite"
+	depends on USB_HID_COMPOSITE && DEBUG_INFO
+	help
+        Activate the debug informations for HID Composite.
+
+
+config USB_HID_COMPOSITE_BATTERY
+    bool "USB HID Composite battery"
+    depends on USB_HID_COMPOSITE && POWER_SUPPLY
+    help
+        The usb HID Composite battery is driver that exposes system battery
+        page to the system and it implements several usages to present a battery
+        or a charger or both.
+
+
+config USB_HID_COMPOSITE_RTC
+    bool "USB HID Composite RTC"
+    depends on USB_HID_COMPOSITE && RTC_CLASS
+    help
+        The usb HID Composite rtc is driver that exposes time sensor page
+        to the system and it implements an RTC time with alarm feature.
+
+
+config USB_HID_COMPOSITE_RGB_LEDS
+    bool "USB HID Composite RGB LEDS"
+    depends on USB_HID_COMPOSITE && LEDS_CLASS
+    help
+        The usb HID Composite RGB LEDS is driver that exposes an rgb led
+        to the system.
+
+endmenu

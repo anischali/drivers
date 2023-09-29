@@ -1,13 +1,10 @@
-obj-m += hid-composite.o hid-led.o hid-input.o rtc-hid-time.o hid-battery.o
+# SPDX-License-Identifier: GPL-2.0
+#
+# Makefile for the USB input drivers
+#
 
-KDIR?="/usr/src/linux-headers-$(shell uname -r)"
-
-SRC:=$(shell pwd)
-
-all:
-	$(MAKE) -C $(KDIR) M=$(SRC) modules
-
-clean:
-	rm -f .*.o.d *.o.d *.o *~ core .depend .*.cmd *.ko *.mod.c *.mod
-	rm -f Module.markers Module.symvers modules.order
-	rm -rf .tmp_versions Modules.symvers
+ccflags-$(CONFIG_USB_HID_COMPOSITE_DEBUG)			+= -DDEBUG -Og
+obj-$(CONFIG_USB_HID_COMPOSITE)						+= hid-composite.o
+obj-$(CONFIG_USB_HID_COMPOSITE_BATTERY)				+= hid-battery.o
+obj-$(CONFIG_USB_HID_COMPOSITE_RTC)					+= rtc-hid-time.o
+obj-$(CONFIG_USB_HID_COMPOSITE_RGB_LEDS)			+= hid-led.o
