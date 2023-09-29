@@ -4,8 +4,9 @@ menu "HID Composite support"
 
 config USB_HID_COMPOSITE
     bool "USB HID Composite group"
-    depends on USB_HID && MFD_CORE
+    depends on USB_HID
     default n
+    select MFD_CORE
     help
         The usb HID Composite is driver that adds an interface subclass to
         the HID interface class to be able to use multiple HID usage pages
