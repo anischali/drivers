@@ -41,6 +41,8 @@ struct hid_battery_usage_info {
 
 
 struct hid_battery {
+	char battery_name[32];
+	char charger_name[32];
 	struct hid_subdevice *hsdev;
 	struct power_supply *battery;
 	struct power_supply_desc battery_desc;
@@ -488,7 +490,6 @@ static int hid_battery_allocate_battery(struct platform_device *pdev)
 {
 	struct hid_battery *bat = platform_get_drvdata(pdev);
 	struct hid_subdevice *hsdev = bat->hsdev;
-	char name[32];
 	int ret;
 
 	if (!bat)
@@ -517,8 +518,8 @@ static int hid_battery_allocate_battery(struct platform_device *pdev)
 	hid_info(hsdev->hdev, "pdev: %p bat: %p bat->battery_data: %p", 
 				pdev, bat, bat->battery_data);
 	
-	snprintf(name, 32, "hid-battery-%d", instance);
-	bat->battery_desc.name = name;
+	snprintf(bat->battery_name, 32, "hid-battery-%d", instance);
+	bat->battery_desc.name = bat->battery_name;
 	bat->battery_desc.type = POWER_SUPPLY_TYPE_BATTERY;
 	bat->battery_desc.get_property = hid_battery_get_property;
 	bat->battery_desc.external_power_changed = power_supply_changed;
@@ -534,7 +535,6 @@ static int hid_battery_allocate_battery(struct platform_device *pdev)
 static int hid_battery_allocate_charger(struct platform_device *pdev)
 {
 	struct hid_battery *bat = platform_get_drvdata(pdev);
-	char name[32];
 	int ret;
 
 	if (!bat)
@@ -557,8 +557,8 @@ static int hid_battery_allocate_charger(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	snprintf(name, 32, "hid-charger-%d", instance);
-	bat->charger_desc.name = name;
+	snprintf(bat->charger_name, 32, "hid-charger-%d", instance);
+	bat->charger_desc.name = bat->charger_name;
 	bat->charger_desc.type = POWER_SUPPLY_TYPE_MAINS,
 	bat->charger_desc.get_property = hid_battery_charger_get_property,
 	bat->charger_desc.num_properties = bat->charger_data_size;
