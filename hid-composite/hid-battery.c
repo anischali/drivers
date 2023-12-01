@@ -431,8 +431,6 @@ static int hid_battery_capture_sample(struct hid_subdevice *hsdev,
 	if (usage)
 	{	
 		usage->value.intval = hid_composite_value(raw_len, raw_data);
-		hid_info(hsdev->hdev, "capture usage logical: 0x%08x usage hid: 0x%08x (value: %d)\n", 
-			usage->info.usage_logical, usage->info.usage_hid, usage->value.intval);
 		return 0;
 	}
 
@@ -453,7 +451,6 @@ static int hid_battery_proc_event(struct hid_subdevice *hsdev, u32 usage_id,
 {
 	struct hid_battery *bat = platform_get_drvdata(priv);
 	complete(&bat->data_completion);
-	hid_info(bat->hsdev->hdev, "event: Usage id: 0x%08x\n", usage_id);
 	
 	return 0;
 }
