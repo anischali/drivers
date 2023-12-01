@@ -129,7 +129,7 @@ static int hidled_write(struct led_classdev *cdev, enum led_brightness br)
 
 static struct hidled_config hidled_config = {
 		.name = "HID Leds",
-		.short_name = "HID_LED",
+		.short_name = "hidled",
 		.max_brightness = 255,
 		.report_size = 6,
 		.report_type = RAW_REQUEST,
@@ -184,8 +184,8 @@ static int hidled_init_led(struct hidled_led *led, const char *color_name,
 	const struct hidled_config *config = rgb->ldev->config;
 
 	if (config->num_leds > 1)
-		snprintf(led->name, sizeof(led->name), "%s%u:%s:led%u",
-			 config->short_name, minor, color_name, rgb->num);
+		snprintf(led->name, sizeof(led->name), "%s-%u-%s",
+			 config->short_name, rgb->num, color_name);
 	else
 		snprintf(led->name, sizeof(led->name), "%s%u:%s",
 			 config->short_name, minor, color_name);
