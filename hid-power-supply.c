@@ -1,0 +1,825 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright 2024 Anis CHALI <anis.chali1@outlook.com>
+ * Based on the Battery driver for the Ingenic JZ47xx SoCs of Artur Rojek <contact@artur-rojek.eu>
+ * based on drivers/power/supply/jz4740-battery.c
+ * Based on the work of Alexander Holler <holler@ahsoftware.de> on HID Sensor HUB
+ */
+
+#include <asm-generic/errno-base.h>
+#include <asm-generic/errno.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
+#include <linux/power_supply.h>
+#include <linux/property.h>
+#include <linux/jiffies.h>
+#include "hid_composite.h"
+#include "hid-battery-system.h"
+
+
+#define HID_SBS_PROPERTY_USAGE(_psp, _usage, _default_value) { \
+	.psp = _psp, \
+	.usage = _usage, \
+	.default_value = _default_value, \
+}
+
+struct hid_sbs_property_usage {
+	int psp;
+	int usage;
+	int default_value;
+};
+
+struct hid_power_supply_usage_info {
+	struct hid_sbs_property_usage *pusage;
+	struct hid_attribute_info info;
+	union hid_usage_propval {
+		int intval;
+		const char *strval;
+	} value;
+};
+
+
+
+struct hid_power_supply {
+	char battery_name[32];
+	char charger_name[32];
+
+	struct hid_subdevice *hsdev;
+
+	struct power_supply *battery;
+	struct power_supply_desc battery_desc;
+	struct power_supply *charger;
+	struct power_supply_desc charger_desc;
+
+	struct hid_composite_callbacks callbacks;
+	struct completion data_completion;
+	spinlock_t data_lock;
+	struct hid_power_supply_usage_info *ps_data_last;
+	struct hid_power_supply_usage_info *ps_data;
+
+	unsigned long last_update;
+	size_t ps_data_size;
+	bool has_battery;
+	bool has_charger;
+	int minor;
+	int battery_status;
+};
+
+
+static const struct hid_sbs_property_usage sbs_battery_prop_usages[] = {
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_STATUS, HID_SBS_SMART_BATTERY_BATTERY_STATUS, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_PRESENT, HID_SBS_BATTERY_PRESENT, 1),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_TECHNOLOGY, HID_SBS_IDEVICE_CHEMISTRY, -1),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CYCLE_COUNT, HID_SBS_CYCLE_COUNT, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CURRENT_AVG, HID_SBS_AVERAGE_CURRENT, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CURRENT_NOW, HID_SBS_CURRENT, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_VOLTAGE_NOW, HID_SBS_VOLTAGE, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX, HID_SBS_CHARGING_VOLTAGE, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN, HID_SBS_DESIGN_VOLTAGE, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CURRENT_MAX, HID_SBS_DESIGN_CAPACITY, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN, HID_SBS_DESIGN_CHARGE_FULL, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_ENERGY_FULL, HID_SBS_CHARGE_FULL, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_ENERGY_NOW, HID_SBS_CHARGE_NOW, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX, HID_SBS_CHARGING_CURRENT, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CAPACITY, HID_SBS_RELATIVE_STATE_OF_CHARGE, 50),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CAPACITY_LEVEL, HID_SBS_RELATIVE_STATE_OF_CHARGE, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CAPACITY_ERROR_MARGIN, HID_SBS_MAX_ERROR, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_TEMP, HID_SBS_TEMPERATURE, 25),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG, HID_SBS_AVERAGE_TIME_TO_EMPTY, 100),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_TIME_TO_FULL_AVG, HID_SBS_AVERAGE_TIME_TO_FULL, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_MANUFACTURE_YEAR, HID_SBS_MANUFACTURE_DATE, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_MANUFACTURE_MONTH, HID_SBS_MANUFACTURE_DATE, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_MANUFACTURE_DAY, HID_SBS_MANUFACTURE_DATE, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_MODEL_NAME, HID_SBS_IDEVICE_NAME, -1),	
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_MANUFACTURER, HID_SBS_IMANUFACTURER_NAME, -1),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_SERIAL_NUMBER, HID_SBS_SERIAL_NUMBER, 12568762),
+};
+
+
+static const struct hid_sbs_property_usage sbs_charger_prop_usages[] = {
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_ONLINE, HID_SBS_SMART_BATTERY_CHARGER_STATUS, 1),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, HID_SBS_CHARGER_CHARGING_CURRENT, 0),
+	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE, HID_SBS_CHARGER_CHARGING_VOLTAGE, 0),
+};
+
+static inline int battery_psp_to_usage_index(enum power_supply_property psp) {
+	int i = 0;
+	for (i = 0; i < ARRAY_SIZE(sbs_battery_prop_usages); ++i)
+		if (sbs_battery_prop_usages[i].psp == psp)
+			return i;
+
+	return -1;
+}
+
+
+static inline int charger_psp_to_usage_index(enum power_supply_property psp) {
+	int i = 0;
+	for (i = 0; i < ARRAY_SIZE(sbs_charger_prop_usages); ++i)
+		if (sbs_charger_prop_usages[i].psp == psp)
+			return i;
+
+	return -1;
+}
+
+static inline struct hid_power_supply_usage_info *
+hid_power_supply_get_usage(struct hid_power_supply_usage_info *usages,
+			size_t size, uint32_t usage_id)
+{
+	int i = 0;
+	for (i = 0; i < size; ++i)
+	{
+		if (usages[i].info.usage_hid == usage_id ||
+			usages[i].info.usage_logical == usage_id)
+			return &usages[i];
+	}
+
+	return NULL;
+}
+
+
+static inline int capacity_to_capacity_level(int capacity)
+{
+	return 	capacity <= 100 && capacity >= 90 ? POWER_SUPPLY_CAPACITY_LEVEL_FULL :
+			capacity >= 75 ? POWER_SUPPLY_CAPACITY_LEVEL_HIGH :
+			capacity >= 40 ? POWER_SUPPLY_CAPACITY_LEVEL_NORMAL :
+			capacity >= 10 ? POWER_SUPPLY_CAPACITY_LEVEL_LOW :
+			capacity >= 0 ? POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL :
+			POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
+
+}
+
+
+static int hid_power_supply_hw_read(struct power_supply *psy, bool force)
+{
+	int ret = 0;
+	struct hid_power_supply *ps = power_supply_get_drvdata(psy);
+
+	if ((jiffies - ps->last_update) < msecs_to_jiffies(2000) && !force)
+		return 0;
+
+	if (completion_done(&ps->data_completion) || force)
+	{
+		reinit_completion(&ps->data_completion);
+		/* get a report with all values through requesting one value */
+		ret = hid_composite_get_report(ps->hsdev, HID_INPUT_REPORT,
+			HID_SBS_BATTERY_SYSTEM_USAGE, ps->ps_data[0].info.usage_id,
+			ps->ps_data[0].info.report_id, HID_COMPOSITE_ASYNC,  NULL, 0, 0);
+		ret = wait_for_completion_interruptible_timeout(
+			&ps->data_completion, msecs_to_jiffies(5000));
+
+		if (ret > 0) {
+			ps->last_update = jiffies;
+			return 0;
+		}
+
+	}
+
+	return -EIO;
+}
+
+
+static int hid_power_supply_hw_write(struct power_supply *psy, uint8_t *values, size_t size)
+{
+	int ret;
+	struct hid_power_supply *ps = power_supply_get_drvdata(psy);
+
+	ret = hid_composite_set_feature(ps->hsdev, ps->ps_data[0].info.report_id, 
+									0, values, size);
+	if (ret)
+		return ret;
+	
+	return hid_power_supply_hw_read(psy, true);
+}
+
+
+
+static void  sbs_unit_adjustment(enum power_supply_property psp, union power_supply_propval *val)
+{
+	switch (psp) {
+
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+	case POWER_SUPPLY_PROP_CURRENT_NOW:
+	case POWER_SUPPLY_PROP_CURRENT_AVG:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
+	case POWER_SUPPLY_PROP_CURRENT_MAX:	
+		val->intval *= BASE_UNIT_CONVERSION;
+		break;
+	
+	case POWER_SUPPLY_PROP_ENERGY_NOW:
+	case POWER_SUPPLY_PROP_CHARGE_NOW:
+	case POWER_SUPPLY_PROP_ENERGY_FULL:
+	case POWER_SUPPLY_PROP_CHARGE_FULL:
+	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		//val->intval /= 10;
+		break;
+
+	case POWER_SUPPLY_PROP_TEMP:
+		/* sbs provides battery temperature in 0.1K
+		 * so convert it to 0.1°C
+		 */
+		val->intval -= TEMP_KELVIN_TO_CELSIUS;
+		break;
+
+	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_NOW:
+	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
+	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
+		/* sbs provides time to empty and time to full in minutes.
+		 * Convert to seconds
+		 */
+		val->intval *= TIME_UNIT_CONVERSION;
+		break;
+
+	default:
+	}
+}
+
+
+static int hid_power_supply_get_property(struct power_supply *psy,
+					enum power_supply_property psp,
+					union power_supply_propval *val)
+{
+	struct hid_power_supply *ps = power_supply_get_drvdata(psy);
+	struct hid_power_supply_usage_info *usage;
+	int psp_idx = battery_psp_to_usage_index(psp);
+	unsigned long flags;
+
+	if (psp_idx < 0 || psp_idx >= ARRAY_SIZE(sbs_battery_prop_usages))
+		return -EINVAL;
+
+	hid_power_supply_hw_read(psy, false);
+
+	usage = hid_power_supply_get_usage(ps->ps_data,
+			ps->ps_data_size, sbs_battery_prop_usages[psp_idx].usage);
+	if (!usage)
+	{
+		return -ENOTSUPP;
+	}
+
+	spin_lock_irqsave(&ps->data_lock, flags);
+
+	switch (psp) {
+		case POWER_SUPPLY_PROP_MODEL_NAME:
+		case POWER_SUPPLY_PROP_MANUFACTURER:
+			val->strval = "Unkown";
+			break;
+		case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
+			val->intval = capacity_to_capacity_level(usage->value.intval);
+			break;
+		case POWER_SUPPLY_PROP_SERIAL_NUMBER:
+			val->strval = "0000000";
+			break;
+		case POWER_SUPPLY_PROP_STATUS:
+			val->intval = usage->value.intval;
+			ps->battery_status = val->intval;
+			break;
+		case POWER_SUPPLY_PROP_CURRENT_NOW:
+		case POWER_SUPPLY_PROP_CURRENT_AVG:
+			val->intval = usage->value.intval;
+			sbs_unit_adjustment(psp, val);
+			
+			if (ps->battery_status == POWER_SUPPLY_STATUS_DISCHARGING && val->intval > 0)
+				val->intval *= -1;
+
+			break;
+		default:
+			val->intval = usage->value.intval;
+			sbs_unit_adjustment(psp, val);
+	}
+
+	spin_unlock_irqrestore(&ps->data_lock, flags);
+
+	return 0;
+}
+
+
+
+static int hid_power_supply_charger_get_property(struct power_supply *psy,
+					enum power_supply_property psp,
+					union power_supply_propval *val)
+{
+	struct hid_power_supply *ps = power_supply_get_drvdata(psy);
+	struct hid_power_supply_usage_info *usage;
+	int psp_idx = charger_psp_to_usage_index(psp);
+	unsigned long flags;
+
+	if (psp_idx < 0 || psp_idx >= ARRAY_SIZE(sbs_charger_prop_usages))
+		return -EINVAL;
+
+	hid_power_supply_hw_read(psy, false);
+
+	usage = hid_power_supply_get_usage(ps->ps_data,
+			ps->ps_data_size, sbs_charger_prop_usages[psp_idx].usage);
+	if (!usage)
+	{
+		return -ENOTSUPP;
+	}
+
+	spin_lock_irqsave(&ps->data_lock, flags);
+	
+	switch (psp) {
+		case POWER_SUPPLY_PROP_ONLINE:
+			val->intval = usage->value.intval;
+		break;
+		default:
+	}
+
+	spin_unlock_irqrestore(&ps->data_lock, flags);
+
+	return 0;
+}
+
+
+
+static int hid_power_supply_charger_set_property(struct power_supply *psy,
+					enum power_supply_property psp,
+					const union power_supply_propval *val)
+{
+	uint8_t online;
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		online = val->intval == 1 ? 1 : 0;
+		return hid_power_supply_hw_write(psy, &online, 1);
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
+static int hid_power_supply_charger_prop_writeable(struct power_supply *psy,
+					  enum power_supply_property psp)
+{
+	return psp == POWER_SUPPLY_PROP_ONLINE;
+}
+
+static void hid_power_supply_external_changed(struct power_supply *psy)
+{
+	hid_power_supply_hw_read(psy, true);
+}
+
+
+static size_t hid_power_supply_usages_count(struct hid_power_supply *ps,
+		const struct hid_sbs_property_usage *sbs_props, size_t sbs_props_length)
+{
+	int ret, i;
+	size_t count = 0;
+	struct hid_attribute_info info;
+	for (i = 0; i < sbs_props_length; ++i)
+	{
+		ret = hid_composite_get_attribute_info(ps->hsdev,
+				HID_INPUT_REPORT,
+				HID_SBS_BATTERY_SYSTEM_USAGE,
+				sbs_props[i].usage, &info);
+		if (!ret)
+			++count;
+	}
+
+	return count;
+}
+
+
+
+
+static inline int hid_power_supply_allocate_properties(
+		struct platform_device *pdev,
+		const struct hid_sbs_property_usage *sbs,
+		size_t plen,
+		enum power_supply_property **properties)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(pdev);
+	enum power_supply_property *props;
+	struct hid_attribute_info info;
+	int i = 0, j = 0, cnt, ret;
+
+	cnt = hid_power_supply_usages_count(ps, sbs, plen);
+	if (cnt <= 0)
+		return -ENOENT;
+
+	props = devm_kcalloc(&pdev->dev, cnt,
+			sizeof(enum power_supply_property), GFP_KERNEL);
+	if (props == NULL)
+		return -ENOMEM;
+
+	for (i = 0; i < plen && j < cnt; i++)
+	{
+		ret = hid_composite_get_attribute_info(ps->hsdev,
+			HID_INPUT_REPORT,
+			HID_SBS_BATTERY_SYSTEM_USAGE,
+			sbs[i].usage,
+			&info);
+
+		if (!ret)
+			props[j++] = sbs[i].psp;
+	}
+
+	*properties = props;
+
+	return cnt;
+}
+
+static inline bool hsdev_has_charger(struct hid_subdevice *hsdev)
+{
+	int ret, i;
+	bool found = false;
+	struct hid_attribute_info info;
+	int hid_charger_usages[] = {
+		HID_SBS_SMART_BATTERY_CHARGER_MODE,
+		HID_SBS_SMART_BATTERY_CHARGER_STATUS,
+		HID_SBS_SMART_BATTERY_CHARGER_SPEC_INFO
+	};
+
+	for (i = 0; i < 3; ++i)
+	{
+		ret = hid_composite_get_attribute_info(hsdev,
+						HID_INPUT_REPORT,
+						HID_SBS_BATTERY_SYSTEM_USAGE,
+						hid_charger_usages[i], &info);
+		if (!ret)
+		{
+			found = true;
+			break;
+		}
+	}
+
+	return found;
+}
+
+static inline bool hsdev_has_battery(struct hid_subdevice *hsdev)
+{
+	int ret, i;
+	bool found = false;
+	struct hid_attribute_info info;
+	int hid_power_supply_usages[] = {
+		HID_SBS_SMART_BATTERY_BATTERY_MODE,
+		HID_SBS_SMART_BATTERY_BATTERY_STATUS,
+		HID_SBS_SMART_BATTERY_ALARM_WARNING,
+	};
+
+	for (i = 0; i < 3; ++i)
+	{
+		ret = hid_composite_get_attribute_info(hsdev,
+				HID_INPUT_REPORT,
+				HID_SBS_BATTERY_SYSTEM_USAGE,
+				hid_power_supply_usages[i], &info);
+		if (!ret)
+		{
+			found = true;
+			break;
+		}
+
+	}
+
+	return found;
+}
+
+
+static int hid_power_supply_get_available_usages(struct hid_power_supply *ps,
+			struct hid_power_supply_usage_info *ps_info, size_t ps_info_len,
+			const struct hid_sbs_property_usage *props, size_t props_len)
+{
+	struct hid_attribute_info info;
+	int i, ret, cnt = 0;
+	struct hid_subdevice *hsdev = ps->hsdev;
+
+	for (i = 0; i < props_len &&
+		cnt < ps_info_len; ++i) {
+		ret = hid_composite_get_attribute_info(hsdev,
+			HID_INPUT_REPORT,
+			HID_SBS_BATTERY_SYSTEM_USAGE,
+			props[i].usage,
+			&info);
+
+		if (!ret) {
+			memcpy(&ps_info[cnt].info,
+				&info, sizeof(struct hid_attribute_info));
+			ps_info[cnt].pusage =
+					(struct hid_sbs_property_usage *)&props[i];
+			++cnt;
+		}
+	}
+
+	return cnt;
+}
+
+
+static int hid_power_supply_capture_sample(struct hid_subdevice *hsdev,
+			u32 usage_id, size_t raw_len, char *raw_data,
+			void *priv)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(priv);
+	struct hid_power_supply_usage_info *usage = NULL;
+
+	usage = hid_power_supply_get_usage(ps->ps_data,
+			ps->ps_data_size, usage_id);
+	if (usage)
+	{
+		usage->value.intval = hid_composite_value(raw_len, raw_data);
+		return 0;
+	}
+
+	usage = hid_power_supply_get_usage(ps->ps_data,
+			ps->ps_data_size, usage_id);
+	if (usage)
+	{
+		usage->value.intval = hid_composite_value(raw_len, raw_data);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+
+static int hid_power_supply_proc_event(struct hid_subdevice *hsdev, u32 usage_id,
+			 void *priv)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(priv);
+	
+	if (ps->has_charger && ps->charger)
+		power_supply_changed(ps->charger);
+		
+	if (ps->has_battery && ps->battery)
+		power_supply_changed(ps->battery);
+
+	if (!completion_done(&ps->data_completion))
+		complete_all(&ps->data_completion);
+
+	return 0;
+}
+
+static int hid_power_supply_allocate_data(struct platform_device *pdev)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(pdev);
+	int ps_size = 0;
+
+	if (ps->has_battery)
+	{
+		ps_size += hid_power_supply_usages_count(ps,
+					sbs_battery_prop_usages, ARRAY_SIZE(sbs_battery_prop_usages));
+
+	}
+
+	if (ps->has_charger)
+	{
+		ps_size += hid_power_supply_usages_count(ps,
+				sbs_charger_prop_usages, ARRAY_SIZE(sbs_charger_prop_usages));
+	}
+
+	ps->ps_data_size = ps_size;
+	ps->ps_data = devm_kcalloc(&pdev->dev, ps->ps_data_size,
+				 sizeof(struct hid_power_supply_usage_info), GFP_KERNEL);
+	if (!ps->ps_data)
+		return -ENOMEM;
+
+
+	ps_size = 0;
+	if (ps->has_battery)
+	{
+		ps_size += hid_power_supply_get_available_usages(ps, &ps->ps_data[0],
+				ps->ps_data_size, sbs_battery_prop_usages,
+				ARRAY_SIZE(sbs_battery_prop_usages));
+	}
+
+	if (ps->has_charger)
+	{
+		ps_size += hid_power_supply_get_available_usages(ps, &ps->ps_data[ps_size],
+				ps->ps_data_size - ps_size, sbs_charger_prop_usages,
+				ARRAY_SIZE(sbs_charger_prop_usages));
+	}
+
+	ps->ps_data_size = ps_size;
+
+	return 0;
+}
+
+
+
+static int hid_power_supply_add_power_supply(struct platform_device *pdev, 
+				struct power_supply **ps, const struct power_supply_desc *desc)
+{
+	int ret;
+	struct power_supply_config psy_cfg = {};
+	struct hid_power_supply *hps = platform_get_drvdata(pdev);
+
+	psy_cfg.drv_data = hps;
+
+	*ps = power_supply_register(&pdev->dev, desc, &psy_cfg);
+	if (IS_ERR(*ps)) {
+		return dev_err_probe(&pdev->dev, PTR_ERR(*ps), "Unable to register %s\n",
+				desc->type == POWER_SUPPLY_TYPE_BATTERY ? "battery" : "charger");
+	}
+
+	ret = power_supply_powers(*ps, &pdev->dev);
+	if (ret) {
+		hid_err(hps->hsdev->hdev, "Unable to get %s info: %d\n",
+				desc->type == POWER_SUPPLY_TYPE_BATTERY ? "battery" : "charger", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+
+static int hid_power_supply_allocate_battery(struct platform_device *pdev)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(pdev);
+	enum power_supply_property *props;
+	int cnt;
+
+	if (!ps)
+		return -ENODEV;
+
+	cnt = hid_power_supply_allocate_properties(pdev,
+			sbs_battery_prop_usages,
+			ARRAY_SIZE(sbs_battery_prop_usages), &props);
+	if	(cnt <= 0)
+		return -ENODEV;
+
+	snprintf(ps->battery_name, 32, "hid-battery-%d", ps->minor);
+	ps->battery_desc.name = ps->battery_name;
+	ps->battery_desc.type = POWER_SUPPLY_TYPE_BATTERY;
+	ps->battery_desc.get_property = hid_power_supply_get_property;
+	ps->battery_desc.external_power_changed = hid_power_supply_external_changed;
+	ps->battery_desc.num_properties = cnt;
+	ps->battery_desc.properties = props;
+	ps->battery_desc.use_for_apm = 0;
+
+	return hid_power_supply_add_power_supply(pdev, &ps->battery, &ps->battery_desc);
+}
+
+
+
+static int hid_power_supply_allocate_charger(struct platform_device *pdev)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(pdev);
+	enum power_supply_property *props;
+	int cnt;
+
+	if (!ps)
+		return -ENODEV;
+
+	cnt = hid_power_supply_allocate_properties(pdev,
+			sbs_charger_prop_usages,
+			ARRAY_SIZE(sbs_charger_prop_usages), &props);
+	if	(cnt <= 0)
+		return -ENODEV;
+
+	snprintf(ps->charger_name, 32, "hid-charger-%d", ps->minor);
+	ps->charger_desc.name = ps->charger_name;
+	ps->charger_desc.type = POWER_SUPPLY_TYPE_MAINS,
+	ps->charger_desc.get_property = hid_power_supply_charger_get_property,
+	ps->charger_desc.set_property = hid_power_supply_charger_set_property,
+	ps->charger_desc.external_power_changed = hid_power_supply_external_changed;
+	ps->charger_desc.property_is_writeable = hid_power_supply_charger_prop_writeable,
+	ps->charger_desc.num_properties = cnt;
+	ps->charger_desc.properties = props;
+	ps->charger_desc.use_for_apm = 0;
+
+	return hid_power_supply_add_power_supply(pdev, &ps->charger, &ps->charger_desc);
+}
+
+
+#ifdef CONFIG_PM
+static int hid_power_supply_suspend(struct hid_subdevice *hsdev, void *priv)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(priv);
+
+	complete_all(&ps->data_completion);
+
+	return 0;
+}
+
+static int hid_power_supply_resume(struct hid_subdevice *hsdev, void *priv)
+{
+	struct hid_power_supply *ps = platform_get_drvdata(priv);
+
+	hid_power_supply_hw_read(ps->battery, true);
+
+	return 0;
+}
+#endif
+
+static int hid_power_supply_probe(struct platform_device *pdev)
+{
+	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
+	struct hid_power_supply *ps;
+
+	int ret;
+
+	if (!hsdev)
+		return -ENODEV;
+
+	ps = devm_kzalloc(&pdev->dev, sizeof(*ps), GFP_KERNEL);
+	if (!ps)
+		return -ENOMEM;
+
+	ret = hid_composite_device_open(hsdev);
+	if (ret)
+		return ret;
+
+	hid_device_io_start(hsdev->hdev);
+
+	spin_lock_init(&ps->data_lock);
+	init_completion(&ps->data_completion);
+
+	ps->hsdev = hsdev;
+	ps->minor = ((struct hidraw *) hsdev->hdev->hidraw)->minor;
+	ps->has_charger = hsdev_has_charger(hsdev);
+	ps->has_battery = hsdev_has_battery(hsdev);
+
+	ps->callbacks.capture_sample = hid_power_supply_capture_sample;
+	ps->callbacks.send_event = hid_power_supply_proc_event;
+#ifdef CONFIG_PM
+	ps->callbacks.suspend = hid_power_supply_suspend;
+	ps->callbacks.resume = hid_power_supply_resume;
+#endif
+	ps->callbacks.pdev = pdev;
+	hid_composite_register_callback(hsdev,
+		HID_SBS_BATTERY_SYSTEM_USAGE, &ps->callbacks);
+
+	platform_set_drvdata(pdev, ps);
+
+	if (ps->has_battery)
+	{
+		ret = hid_power_supply_allocate_battery(pdev);
+		if (ret)
+			goto cleanup;
+	}
+
+	if (ps->has_charger)
+	{
+		ret = hid_power_supply_allocate_charger(pdev);
+		if (ret)
+			goto cleanup_battery;
+	}
+
+	ret = hid_power_supply_allocate_data(pdev);
+	if (ret)
+		goto cleanup_charger;
+
+	hid_power_supply_hw_read(ps->battery, true);
+
+	hid_info(hsdev->hdev, "ps->ps_data: %p: ps->ps_data_size: %ld\n",
+				ps->ps_data, ps->ps_data_size);
+
+	return 0;
+
+cleanup_charger:
+	if (ps->has_charger && ps->charger)
+		power_supply_unregister(ps->charger);
+cleanup_battery:
+	if (ps->has_battery && ps->battery)
+		power_supply_unregister(ps->battery);
+cleanup:
+	hid_device_io_stop(hsdev->hdev);
+	hid_composite_device_close(hsdev);
+	hid_composite_remove_callback(hsdev, HID_SBS_BATTERY_SYSTEM_USAGE);
+
+	return ret;
+}
+
+
+static int hid_power_supply_remove(struct platform_device *pdev)
+{
+	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
+	struct hid_power_supply *ps = platform_get_drvdata(pdev);
+
+	complete_all(&ps->data_completion);
+
+	if (ps->has_battery && ps->battery)
+		power_supply_unregister(ps->battery);
+
+	if (ps->has_charger && ps->charger)
+		power_supply_unregister(ps->charger);
+
+	hid_device_io_stop(hsdev->hdev);
+	hid_composite_device_close(hsdev);
+	hid_composite_remove_callback(hsdev, HID_SBS_BATTERY_SYSTEM_USAGE);
+	return 0;
+}
+
+static const struct platform_device_id hid_power_supply_platform_ids[] = {
+	{
+		/* Format: HID-COMPOSITE-usage_id_in_hex_lowercase */
+		.name = "HID-COMPOSITE-850000",
+	},
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(platform, hid_power_supply_platform_ids);
+
+static struct platform_driver hid_power_supply_driver = {
+	.id_table = hid_power_supply_platform_ids,
+	.driver = {
+		.name	= KBUILD_MODNAME,
+	},
+	.probe = hid_power_supply_probe,
+	.remove = hid_power_supply_remove,
+};
+module_platform_driver(hid_power_supply_driver);
+
+MODULE_DESCRIPTION("HID Battery driver for USB HID based batteries");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
+MODULE_LICENSE("GPL");
