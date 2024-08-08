@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * HID Composite driver
- * Copyright 2024 Anis CHALI <anis.chali1@outlook.com>
+ * Copyright 2024 Anis CHALI <anis.chali@exfo.com>
  * Based on the work of Alexander Holler <holler@ahsoftware.de> on HID Sensor HUB drivers/hid/hid-sensor-hub.c
  */
 #include <linux/hid.h>
@@ -477,6 +477,49 @@ done:
 }
 EXPORT_SYMBOL_GPL(hid_composite_output_attr_set_raw_value);
 
+int hid_composite_get_raw_value(struct hid_subdevice *hsdev,  int report_id, int report_type, void *data, size_t size)
+{
+	struct hid_composite_device *cdev = hid_get_drvdata(hsdev->hdev);
+	int ret = 0;
+
+	mutex_lock(&cdev->mutex);
+
+	ret = hid_hw_raw_request(hsdev->hdev, report_id, 
+	 			data, size, report_type, HID_REQ_GET_REPORT);
+	if (ret < 0) {
+		mutex_unlock(&cdev->mutex);
+		return ret;
+	}
+	hid_hw_wait(hsdev->hdev);
+	mutex_unlock(&cdev->mutex);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hid_composite_get_raw_value);
+
+int hid_composite_set_raw_value(struct hid_subdevice *hsdev, int report_id, int report_type, void *data, size_t size)
+{
+	struct hid_composite_device *cdev = hid_get_drvdata(hsdev->hdev);
+	int ret = 0;
+
+	mutex_lock(&cdev->mutex);
+
+	ret = hid_hw_raw_request(hsdev->hdev, report_id, 
+	 			data, size, report_type, HID_REQ_SET_REPORT);
+	if (ret < 0) {
+		mutex_unlock(&cdev->mutex);
+		return ret;
+	}
+
+	hid_hw_wait(hsdev->hdev);	
+	mutex_unlock(&cdev->mutex);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hid_composite_set_raw_value);
+
+
+
 /*
  * Handle raw report as sent by device
  */
@@ -848,5 +891,5 @@ static struct hid_driver hid_composite_driver = {
 module_hid_driver(hid_composite_driver);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
 MODULE_DESCRIPTION("USB HID Composite driver");

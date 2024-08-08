@@ -125,8 +125,8 @@ static int hid_typec_capture_sample(struct hid_subdevice *hsdev,
 {
 	struct hid_typec_t *usb = platform_get_drvdata(priv);
 	struct hid_typec_info_t *info = &usb->data_buf;
-	printk("hid-typec: usage: 0x%08x val: %d\n", usage_id, hid_composite_value(raw_len, raw_data));
-    switch (usage_id)
+	
+	switch (usage_id)
     {
     case HID_USAGE_TYPEC_PORT_TYPE:
         info->port_type = hid_composite_value(raw_len, raw_data);
@@ -330,8 +330,8 @@ fwnode_err:
 #ifdef CONFIG_OF
 of_node_err:
 	of_node_put(node);
-ret_err:
 #endif
+ret_err:
 	hid_composite_remove_callback(hsdev, HID_USAGE_TYPEC);
     hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
@@ -375,6 +375,6 @@ static struct platform_driver hid_typec_platform_driver = {
 module_platform_driver(hid_typec_platform_driver);
 
 MODULE_DESCRIPTION("HID USB Typec");
-MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
 MODULE_LICENSE("GPL");
 MODULE_IMPORT_NS(IIO_HID);

@@ -19,7 +19,7 @@
 
 
 // five usages (direction, bias, polarity, value, label)
-enum hid_typec_enum {
+enum hid_gpio_enum {
 	HID_GPIO_DIRECTION_IDX,
 	HID_GPIO_BIAS_IDX,
 	HID_GPIO_POLARITY_IDX,
@@ -565,6 +565,6 @@ static struct platform_driver hid_gpio_platform_driver = {
 module_platform_driver(hid_gpio_platform_driver);
 
 MODULE_DESCRIPTION("HID USB Gpio");
-MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
 MODULE_LICENSE("GPL");
 MODULE_IMPORT_NS(IIO_HID);

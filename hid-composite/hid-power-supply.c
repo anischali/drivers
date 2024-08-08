@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright 2024 Anis CHALI <anis.chali1@outlook.com>
+ * Copyright 2024 Anis CHALI <anis.chali@exfo.com>
  * Based on the Battery driver for the Ingenic JZ47xx SoCs of Artur Rojek <contact@artur-rojek.eu>
  * based on drivers/power/supply/jz4740-battery.c
  * Based on the work of Alexander Holler <holler@ahsoftware.de> on HID Sensor HUB
@@ -152,26 +152,29 @@ static inline int capacity_to_capacity_level(int capacity)
 static int hid_power_supply_hw_read(struct power_supply *psy, bool force)
 {
 	int ret = 0;
-	struct hid_power_supply *ps = power_supply_get_drvdata(psy);
+	struct hid_power_supply *ps;
+
+	if (!psy)
+		return -ENODEV;
+
+	ps = power_supply_get_drvdata(psy);
+	if (!ps)
+		return -ENODEV;
 
 	if ((jiffies - ps->last_update) < msecs_to_jiffies(2000) && !force)
 		return 0;
 
-	if (completion_done(&ps->data_completion) || force)
-	{
-		reinit_completion(&ps->data_completion);
-		/* get a report with all values through requesting one value */
-		ret = hid_composite_get_report(ps->hsdev, HID_INPUT_REPORT,
+	reinit_completion(&ps->data_completion);
+	/* get a report with all values through requesting one value */
+	ret = hid_composite_get_report(ps->hsdev, HID_INPUT_REPORT,
 			HID_SBS_BATTERY_SYSTEM_USAGE, ps->ps_data[0].info.usage_id,
 			ps->ps_data[0].info.report_id, HID_COMPOSITE_ASYNC,  NULL, 0, 0);
-		ret = wait_for_completion_interruptible_timeout(
-			&ps->data_completion, msecs_to_jiffies(5000));
+	ret = wait_for_completion_interruptible_timeout(
+		&ps->data_completion, msecs_to_jiffies(1000));
 
-		if (ret > 0) {
-			ps->last_update = jiffies;
-			return 0;
-		}
-
+	if (ret > 0) {
+		ps->last_update = jiffies;
+		return 0;
 	}
 
 	return -EIO;
@@ -181,7 +184,14 @@ static int hid_power_supply_hw_read(struct power_supply *psy, bool force)
 static int hid_power_supply_hw_write(struct power_supply *psy, uint8_t *values, size_t size)
 {
 	int ret;
-	struct hid_power_supply *ps = power_supply_get_drvdata(psy);
+	struct hid_power_supply *ps;
+	
+	if (!psy)
+		return -ENODEV;
+
+	ps = power_supply_get_drvdata(psy);
+	if (!ps)
+		return -ENODEV;
 
 	ret = hid_composite_set_feature(ps->hsdev, ps->ps_data[0].info.report_id, 
 									0, values, size);
@@ -254,9 +264,8 @@ static int hid_power_supply_get_property(struct power_supply *psy,
 	usage = hid_power_supply_get_usage(ps->ps_data,
 			ps->ps_data_size, sbs_battery_prop_usages[psp_idx].usage);
 	if (!usage)
-	{
 		return -ENOTSUPP;
-	}
+	
 
 	spin_lock_irqsave(&ps->data_lock, flags);
 
@@ -313,9 +322,7 @@ static int hid_power_supply_charger_get_property(struct power_supply *psy,
 	usage = hid_power_supply_get_usage(ps->ps_data,
 			ps->ps_data_size, sbs_charger_prop_usages[psp_idx].usage);
 	if (!usage)
-	{
 		return -ENOTSUPP;
-	}
 
 	spin_lock_irqsave(&ps->data_lock, flags);
 	
@@ -685,10 +692,6 @@ static int hid_power_supply_allocate_charger(struct platform_device *pdev)
 #ifdef CONFIG_PM
 static int hid_power_supply_suspend(struct hid_subdevice *hsdev, void *priv)
 {
-	struct hid_power_supply *ps = platform_get_drvdata(priv);
-
-	complete_all(&ps->data_completion);
-
 	return 0;
 }
 
@@ -761,9 +764,6 @@ static int hid_power_supply_probe(struct platform_device *pdev)
 		goto cleanup_charger;
 
 	hid_power_supply_hw_read(ps->battery, true);
-
-	hid_info(hsdev->hdev, "ps->ps_data: %p: ps->ps_data_size: %ld\n",
-				ps->ps_data, ps->ps_data_size);
 
 	return 0;
 

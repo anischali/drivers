@@ -10,6 +10,9 @@
 #define HID_GROUP_COMPOSITE 0x0005U
 #endif
 
+#define _min(x, y) ((x < y) ? x : y)
+#define _max(x, y) ((x > y) ? x : y)
+
 enum hid_composite_read_flags {
 	HID_COMPOSITE_SYNC,
 	HID_COMPOSITE_ASYNC,
@@ -122,6 +125,12 @@ int hid_composite_get_report(struct hid_subdevice *hsdev,
 
 int hid_composite_set_report(struct hid_subdevice *hsdev, int report_type,
 			u32 report_id, u32 field_index, void *buffer, int buffer_size);
+	
+int hid_composite_get_raw_value(struct hid_subdevice *hsdev,  int report_id, 
+						int report_type, void *data, size_t size);
+
+int hid_composite_set_raw_value(struct hid_subdevice *hsdev,  int report_id, 
+						int report_type, void *data, size_t size);
 
 static inline u32 hid_composite_value(size_t raw_len, char *raw_data)
 {

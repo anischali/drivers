@@ -31,6 +31,7 @@ struct hid_time_data_t {
 };
 
 struct hid_time_state {
+	char name[32];
 	struct hid_composite_callbacks callbacks;
 	struct hid_attribute_info info[TIME_RTC_CHANNEL_MAX];
 	struct rtc_time last_time;
@@ -212,10 +213,10 @@ static int hid_time_parse_report(struct platform_device *pdev,
 	return 0;
 }
 
-static int hid_rtc_read_time(struct device *dev, struct rtc_time *tm)
-{
+
+
+static int hid_rtc_hw_read(struct hid_time_state *time_state, struct rtc_time *tm) {
 	unsigned long flags;
-	struct hid_time_state *time_state = dev_get_drvdata(dev);
 	int ret, retry = 3;
 		
 	do {
@@ -236,6 +237,13 @@ static int hid_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	} while (ret <= 0 && retry-- > 0);
 
 	return -EIO;
+}
+
+static int hid_rtc_read_time(struct device *dev, struct rtc_time *tm)
+{
+	struct hid_time_state *time_state = dev_get_drvdata(dev);
+
+	return 	hid_rtc_hw_read(time_state, tm);
 }
 
 
@@ -350,6 +358,22 @@ static const struct hid_time_data_t rtc_data = {
 	.alarm_wakeup = false,
 };
 
+#ifdef CONFIG_PM
+static int hid_time_suspend(struct hid_subdevice *hsdev, void *priv)
+{
+	return 0;
+}
+
+static int hid_time_resume(struct hid_subdevice *hsdev, void *priv)
+{
+	struct hid_time_state *time_state = platform_get_drvdata(priv);
+	struct rtc_time tm;
+
+	hid_rtc_hw_read(time_state, &tm);
+
+	return 0;
+}
+#endif
 
 static int hid_time_probe(struct platform_device *pdev)
 {
@@ -382,6 +406,10 @@ static int hid_time_probe(struct platform_device *pdev)
 	time_state->hid_usage = drv_data->hid_usage;
 	time_state->callbacks.send_event = hid_time_proc_event;
 	time_state->callbacks.capture_sample = hid_time_capture_sample;
+#ifdef CONFIG_PM
+	time_state->callbacks.suspend = hid_time_suspend;
+	time_state->callbacks.resume = hid_time_resume;
+#endif
 	time_state->callbacks.pdev = pdev;
 	ret = hid_composite_register_callback(hsdev, drv_data->hid_usage,
 					&time_state->callbacks);
@@ -402,30 +430,39 @@ static int hid_time_probe(struct platform_device *pdev)
 	 */
 	hid_device_io_start(hsdev->hdev);
 
-
+	device_init_wakeup(&pdev->dev, drv_data->alarm_wakeup);
+#if defined(CONFIG_RTC_NAMED_DEVICE)
+	snprintf(time_state->name, 32, "hid-rtc%d", time_state->minor);
+	time_state->rtc = __devm_rtc_device_register(&pdev->dev,
+					time_state->name,
+					drv_data->hid_time_rtc_ops,
+					THIS_MODULE);
+	if (IS_ERR(time_state->rtc)) {
+		ret = PTR_ERR(time_state->rtc);
+		dev_err(&pdev->dev, "rtc device register failed with %d\n", ret);
+		goto err_wakeup;
+	}
+#else
 	time_state->rtc = devm_rtc_allocate_device(&pdev->dev);
 	if (IS_ERR(time_state->rtc)) {
 		ret = PTR_ERR(time_state->rtc);
 		time_state->rtc = NULL;
 		dev_err(&pdev->dev, "rtc device allocate failed with %d\n", ret);
-		goto err_rtc;
+		goto err_wakeup;
 	}
-	
-	device_init_wakeup(&pdev->dev, drv_data->alarm_wakeup);
+
 	time_state->rtc->ops = drv_data->hid_time_rtc_ops;
 	time_state->rtc->owner = THIS_MODULE;
-
 	ret = devm_rtc_register_device(time_state->rtc);
 	if (ret) {
 		dev_err(&pdev->dev, "rtc device register failed with %d\n", ret);
 		goto err_wakeup;
 	}
-
+#endif
 	return 0;
 
 err_wakeup:
 	device_init_wakeup(&pdev->dev, 0);
-err_rtc:
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
 err_open:
@@ -482,6 +519,6 @@ module_platform_driver(hid_time_platform_driver);
 MODULE_ALIAS("platform:hid-rtc");
 
 MODULE_DESCRIPTION("HID Sensor Time");
-MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
 MODULE_LICENSE("GPL");
 MODULE_IMPORT_NS(IIO_HID);
