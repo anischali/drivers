@@ -13,6 +13,10 @@
 #include <linux/rtc.h>
 #include <linux/hid-sensor-ids.h>
 
+
+int hid_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alarm);
+int hid_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm);
+
 enum hid_time_channel {
 	CHANNEL_SCAN_INDEX_YEAR,
 	CHANNEL_SCAN_INDEX_MONTH,

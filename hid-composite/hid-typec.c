@@ -98,10 +98,22 @@ static const struct typec_operations hid_typec_ops = {
 };
 
 
+static inline int typec_data_role_to_usb_role(enum typec_data_role role) {
+	switch (role) {
+		case TYPEC_DEVICE:
+			return USB_ROLE_DEVICE;
+		case TYPEC_HOST:
+			return USB_ROLE_HOST;
+		default:
+	}
+
+	return USB_ROLE_NONE;
+}
+
 static int hid_typec_set_usb_role(struct hid_typec_t *usb)
 {
-	enum usb_role role_state;
-	role_state = usb->last_data.data_role;
+	enum usb_role role_state = typec_data_role_to_usb_role(usb->last_data.data_role);
+
 	usb_role_switch_set_role(usb->role_sw, role_state);
 
 	switch (role_state) {
@@ -331,6 +343,7 @@ fwnode_err:
 of_node_err:
 	of_node_put(node);
 #endif
+
 ret_err:
 	hid_composite_remove_callback(hsdev, HID_USAGE_TYPEC);
     hid_device_io_stop(hsdev->hdev);

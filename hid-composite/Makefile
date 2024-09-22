@@ -13,7 +13,7 @@ ccflags-$(CONFIG_HID_COMPOSITE_DEBUG)			+= -DDEBUG -Og
  
 obj-$(CONFIG_HID_COMPOSITE_ALL)					+= hid-composite.o hid-gpio.o hid-typec.o hid-led.o hid-rtc.o hid-power-supply.o hid-i2c.o hid-firmware.o
 
-KERNEL_SRC?="/usr/src/linux-headers-$(shell uname -r)"
+KERNEL_SRC?="/usr/src/kernels/$(shell uname -r)"
 DESTDIR ?= "$(INSTALL_MOD_PATH)"
 
 SRC:=$(shell pwd)
