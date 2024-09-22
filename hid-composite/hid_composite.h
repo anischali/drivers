@@ -58,6 +58,7 @@ struct hid_attribute_info {
 };
 
 struct hid_subdevice {
+	int id;
 	struct hid_device *hdev;
 	u32 vendor_id;
 	u32 product_id;
