@@ -13,6 +13,7 @@
 #include "hid_composite.h"
 #include "hid-ids.h"
 
+DEFINE_IDA(hid_composite_ida);
 
 /**
  * struct hid_sensor_hub_callbacks_list - Stores callback list
@@ -39,9 +40,10 @@ struct hid_composite_device {
 	spinlock_t dyn_callback_lock;
 	int hid_composite_client_cnt;
 	int ref_cnt;
+	int id;
 };
 
-static inline struct hid_report *hid_composite_report(int id, struct hid_device *hdev,
+struct hid_report *hid_composite_report(int id, struct hid_device *hdev,
 						int dir)
 {
 	struct hid_report *report;
@@ -742,6 +744,8 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret)
 		return ret;
+
+	ldev->id = ida_simple_get(&hid_composite_ida, 0, 0, GFP_KERNEL);
 	
 	INIT_LIST_HEAD(&ldev->dyn_callback_list);
 	ldev->hid_composite_client_cnt = 0;
@@ -781,6 +785,7 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 			hsdev->vendor_id = hdev->vendor;
 			hsdev->product_id = hdev->product;
 			hsdev->usage = collection->usage;
+			hsdev->id = ldev->id;
 			hsdev->mutex_ptr = devm_kzalloc(&hdev->dev,
 							sizeof(struct mutex),
 							GFP_KERNEL);
@@ -838,6 +843,7 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 	return 0;
 
 err_stop_hw:
+	ida_simple_remove(&hid_composite_ida, ldev->id);
 	hid_hw_stop(hdev);
 	return ret;
 }
@@ -865,6 +871,7 @@ static void hid_composite_remove(struct hid_device *hdev)
 	}
 	spin_unlock_irqrestore(&cdev->lock, flags);
 	mfd_remove_devices(&hdev->dev);
+	ida_simple_remove(&hid_composite_ida, cdev->id);
 }
 
 
