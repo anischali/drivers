@@ -8,6 +8,7 @@ enum _board_type {
 	BOARD_TYPE_CARRIER,
 	BOARD_TYPE_BACKPLANE,
 	BOARD_TYPE_EXTENTION,
+    BOARD_TYPE_EVAL_KIT,
 };
 typedef uint8_t board_type_t;
 
@@ -23,7 +24,8 @@ enum hid_firmware_usage {
     HID_USAGE_FIRMWARE_SIGNATURE                          = 0x990017U,
     HID_USAGE_FIRMWARE_VERSION                            = 0x990018U,
     HID_USAGE_FIRMWARE_HW_REVISION                        = 0x990019U,
-    HID_USAGE_FIRMWARE_BOARD_TYPE                         = 0x99001AU,           
+    HID_USAGE_FIRMWARE_BOARD_TYPE                         = 0x99001AU,
+    HID_USAGE_FIRMWARE_BOARD_ID                           = 0x99001BU,           
 };
 
 #endif

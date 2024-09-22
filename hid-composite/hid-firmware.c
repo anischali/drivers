@@ -26,6 +26,7 @@ enum _hid_firmware_requests {
     HID_FIRMWARE_VERSION,
     HID_FIRMWARE_HW_REVISION,
     HID_FIRMWARE_BOARD_TYPE,
+    HID_FIRMWARE_BOARD_ID,
     HID_FIRMWARE_USAGES_MAX
 };
 typedef uint8_t firmware_request_type_t;
@@ -71,6 +72,7 @@ struct hid_firmware_fields_t {
     uint32_t version;
     uint32_t hardware_revision;
     uint8_t board_type;
+    int board_id;
 };
 
 static uint32_t usage_addresses[HID_FIRMWARE_USAGES_MAX] = {
@@ -84,6 +86,8 @@ static uint32_t usage_addresses[HID_FIRMWARE_USAGES_MAX] = {
     [HID_FIRMWARE_SIGNATURE] = HID_USAGE_FIRMWARE_SIGNATURE,
     [HID_FIRMWARE_VERSION] = HID_USAGE_FIRMWARE_VERSION,
     [HID_FIRMWARE_HW_REVISION] = HID_USAGE_FIRMWARE_HW_REVISION,
+    [HID_FIRMWARE_BOARD_TYPE] = HID_USAGE_FIRMWARE_BOARD_TYPE,
+    [HID_FIRMWARE_BOARD_ID] = HID_USAGE_FIRMWARE_BOARD_ID,
 };
 
 struct hid_firmware_t {
@@ -205,6 +209,9 @@ static int hid_firmware_capture_sample(struct hid_subdevice *hsdev,
     case HID_FIRMWARE_BOARD_TYPE:
         memcpy((uint8_t *)&firm->firmware.board_type, (uint8_t *)&report->data[0], length);
         break;    
+    case HID_FIRMWARE_BOARD_ID:
+        memcpy((uint8_t *)&firm->firmware.board_id, (uint8_t *)&report->data[0], length);
+        break;    
     }
     spin_unlock_irqrestore(&firm->data_lock, flags);
     return 0;
@@ -304,6 +311,9 @@ static ssize_t hid_firmware_show(struct hid_firmware_t *firm, struct hid_firmwar
         break;
     case HID_FIRMWARE_BOARD_TYPE:
         size = snprintf(buf, 32, "0x%08x\n", firm->firmware.board_type);
+        break;
+    case HID_FIRMWARE_BOARD_ID:
+        size = snprintf(buf, 32, "%d\n", firm->firmware.board_id);
         break;    
     }
 
@@ -342,6 +352,7 @@ HID_FIRMWARE_ATTR(signature, HID_FIRMWARE_SIGNATURE);
 HID_FIRMWARE_ATTR(version, HID_FIRMWARE_VERSION);
 HID_FIRMWARE_ATTR(hardware_revision, HID_FIRMWARE_HW_REVISION);
 HID_FIRMWARE_ATTR(board_type, HID_FIRMWARE_BOARD_TYPE);
+HID_FIRMWARE_ATTR(board_id, HID_FIRMWARE_BOARD_ID);
 
 static const struct attribute * const hid_firmware_sysfs_attrs[] = {
 	&hid_firmware_attr_wakeup_reason.attr,
@@ -355,6 +366,7 @@ static const struct attribute * const hid_firmware_sysfs_attrs[] = {
     &hid_firmware_attr_version.attr,
     &hid_firmware_attr_hardware_revision.attr,
     &hid_firmware_attr_board_type.attr,
+    &hid_firmware_attr_board_id.attr,
     NULL
 };
 
@@ -385,6 +397,9 @@ static int hid_firmware_add_attributes(struct hid_firmware_t *firm) {
             break;
 	    case BOARD_TYPE_EXTENTION:
             snprintf(firm->name, 32, "hid-extention-%d", firm->minor);
+            break;
+         case BOARD_TYPE_EVAL_KIT:
+            snprintf(firm->name, 32, "hid-evalkit-%d", firm->minor);
             break;
     }
 
@@ -423,7 +438,7 @@ static int hid_firmware_platform_probe(struct platform_device *pdev)
 	hid_device_io_start(hsdev->hdev);
 
     firm->hsdev = hsdev;
-	firm->minor = ((struct hidraw *) hsdev->hdev->hidraw)->minor;
+	firm->minor = hsdev->id;
     spin_lock_init(&firm->data_lock);
     init_completion(&firm->completion);
 	platform_set_drvdata(pdev, firm);
