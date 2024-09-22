@@ -43,7 +43,7 @@ struct hid_composite_device {
 	int id;
 };
 
-struct hid_report *hid_composite_report(int id, struct hid_device *hdev,
+static inline struct hid_report *hid_composite_report(int id, struct hid_device *hdev,
 						int dir)
 {
 	struct hid_report *report;

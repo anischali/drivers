@@ -7,7 +7,7 @@
 #include <linux/hid-sensor-ids.h>
 #include <linux/usb/role.h>
 #include <linux/usb/typec.h>
-
+#include <linux/interrupt.h>
 
 #define HID_USAGE_TYPEC				        0x860000U
 #define HID_USAGE_TYPEC_PORT_TYPE	        0x860001U
@@ -59,6 +59,7 @@ struct hid_typec_t {
     struct hid_subdevice *hsdev;
     struct hid_composite_callbacks callbacks;
 	struct completion data_completion;
+	struct tasklet_struct tasklet;
 	spinlock_t data_lock;
 
     struct usb_role_switch	*role_sw;
@@ -67,7 +68,8 @@ struct hid_typec_t {
 	struct hid_typec_info_t last_data;
 	struct hid_typec_info_t data_buf;
 	struct hid_attribute_info info[HID_TYPEC_CHANNEL_MAX];
-	struct work_struct work;
+
+	bool ready;
 };
 
 static const struct of_device_id usbc_connector_dt_match[] = {
@@ -176,13 +178,15 @@ static int hid_typec_proc_event(struct hid_subdevice *hsdev, u32 usage_id,
 			 void *priv)
 {
 	struct hid_typec_t *usb = platform_get_drvdata(priv);
+	bool updated = false;
 	unsigned long flags;
 
 	spin_lock_irqsave(&usb->data_lock, flags);
-	if (usb->data_buf.data_role != usb->last_data.data_role)
-		schedule_work(&usb->work);
-
+	updated = usb->data_buf.data_role != usb->last_data.data_role;
 	usb->last_data = usb->data_buf;
+
+	if (updated && usb->ready)
+		tasklet_schedule(&usb->tasklet);
 
 	spin_unlock_irqrestore(&usb->data_lock, flags);
 	complete(&usb->data_completion);
@@ -210,35 +214,30 @@ static int hid_typec_parse_report(struct platform_device *pdev)
 	return 0;
 }
 
-static int hid_typec_hw_read(struct hid_typec_t *usb, uint32_t channel_idx)
+static int hid_typec_hw_read(struct hid_typec_t *usb, uint32_t channel_idx, bool async)
 {
 	int ret;
-	reinit_completion(&usb->data_completion);
+	
+	if (async)
+		reinit_completion(&usb->data_completion);
+	
 	/* get a report with all values through requesting one value */
 	hid_composite_input_attr_get_raw_value(usb->hsdev,
 			HID_USAGE_TYPEC, usage_addresses[channel_idx],
-			usb->info[channel_idx].report_id, HID_COMPOSITE_ASYNC, false);
-	/* wait for all values (event) */
-	ret = wait_for_completion_killable_timeout(
-			&usb->data_completion,  msecs_to_jiffies(1000));
-
-	if (ret > 0) //no error
-		return 0;
+			usb->info[channel_idx].report_id, ((async) ? HID_COMPOSITE_ASYNC : HID_COMPOSITE_SYNC), false);
 	
-	return ret;
-}
+	if (async) {
+		/* wait for all values (event) */
+		ret = wait_for_completion_killable_timeout(
+				&usb->data_completion,  msecs_to_jiffies(1000));
 
-
-static void hid_typec_work(struct work_struct *work)
-{
-	struct hid_typec_t *usb = container_of(work, struct hid_typec_t, work);
-	unsigned long flags;
-
-	spin_lock_irqsave(&usb->data_lock, flags);
-
-	hid_typec_set_usb_role(usb);
-
-	spin_unlock_irqrestore(&usb->data_lock, flags);
+		if (ret > 0) //no error
+			return 0;
+		else
+			return ret;
+	}
+	
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -251,10 +250,21 @@ static int hid_typec_resume(struct hid_subdevice *hsdev, void *priv)
 {
 	struct hid_typec_t *usb = platform_get_drvdata(priv);
 
-	return hid_typec_hw_read(usb, CHANNEL_SCAN_INDEX_DATA_ROLE);
+	return hid_typec_hw_read(usb, CHANNEL_SCAN_INDEX_DATA_ROLE, false);
 }
 #endif
 
+
+static void
+hid_typec_tasklet(unsigned long context)
+{
+	struct hid_typec_t *usb = (struct hid_typec_t *)context;
+
+	if (!usb)
+		return;
+
+	hid_typec_set_usb_role(usb);
+}
 
 static int hid_typec_platform_probe(struct platform_device *pdev)
 {
@@ -280,7 +290,6 @@ static int hid_typec_platform_probe(struct platform_device *pdev)
 
     spin_lock_init(&usb->data_lock);
 	init_completion(&usb->data_completion);
-	INIT_WORK(&usb->work, hid_typec_work);
 	usb->hsdev = hsdev;
 	platform_set_drvdata(pdev, usb);
 
@@ -289,6 +298,8 @@ static int hid_typec_platform_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to setup attributes!\n");
 		return ret;
 	}
+
+	tasklet_init(&usb->tasklet, hid_typec_tasklet, (unsigned long) usb);
 
     usb->callbacks.capture_sample = hid_typec_capture_sample;
 	usb->callbacks.send_event = hid_typec_proc_event;
@@ -330,10 +341,11 @@ static int hid_typec_platform_probe(struct platform_device *pdev)
 		goto fwnode_err;
 	}
 
-	ret = hid_typec_hw_read(usb, CHANNEL_SCAN_INDEX_DATA_ROLE);
+	ret = hid_typec_hw_read(usb, CHANNEL_SCAN_INDEX_DATA_ROLE, false);
 	if (ret)
 		hid_err(usb->hsdev->hdev, "Unable to get the usb role.\n");
 
+	usb->ready = true;
 	hid_info(usb->hsdev->hdev, "hid typec was successfully probed!\n");
 	return 0;
 
@@ -343,8 +355,8 @@ fwnode_err:
 of_node_err:
 	of_node_put(node);
 #endif
-
 ret_err:
+	tasklet_kill(&usb->tasklet);
 	hid_composite_remove_callback(hsdev, HID_USAGE_TYPEC);
     hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
@@ -357,8 +369,7 @@ static int hid_typec_platform_remove(struct platform_device *pdev)
 	struct hid_typec_t *usb = platform_get_drvdata(pdev);
 
     complete_all(&usb->data_completion);
-	cancel_work_sync(&usb->work);
-
+	tasklet_kill(&usb->tasklet);
     typec_unregister_port(usb->port);
     usb_role_switch_put(usb->role_sw);
 	hid_device_io_stop(hsdev->hdev);
