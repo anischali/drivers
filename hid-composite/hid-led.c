@@ -282,7 +282,7 @@ static int hidled_platform_probe(struct platform_device *pdev)
 	if (ret)
 		goto ret_err;
 
-	minor = ((struct hidraw *) hsdev->hdev->hidraw)->minor;
+	minor = hsdev->id;
 
 	for (i = 0; i < ldev->config->num_leds; i++) {
 		ldev->rgb[i].ldev = ldev;

@@ -13,10 +13,6 @@
 #include <linux/rtc.h>
 #include <linux/hid-sensor-ids.h>
 
-
-int hid_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alarm);
-int hid_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm);
-
 enum hid_time_channel {
 	CHANNEL_SCAN_INDEX_YEAR,
 	CHANNEL_SCAN_INDEX_MONTH,
@@ -406,7 +402,7 @@ static int hid_time_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	time_state->minor = ((struct hidraw *) hsdev->hdev->hidraw)->minor;
+	time_state->minor = hsdev->id;
 	time_state->hid_usage = drv_data->hid_usage;
 	time_state->callbacks.send_event = hid_time_proc_event;
 	time_state->callbacks.capture_sample = hid_time_capture_sample;

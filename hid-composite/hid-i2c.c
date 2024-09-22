@@ -301,7 +301,7 @@ static int hid_i2c_platform_probe(struct platform_device *pdev)
 	hid_device_io_start(hsdev->hdev);
 
     adapt->hsdev = hsdev;
-	adapt->minor = ((struct hidraw *) hsdev->hdev->hidraw)->minor;
+	adapt->minor = hsdev->id;
     spin_lock_init(&adapt->data_lock);
     init_completion(&adapt->completion);
 	platform_set_drvdata(pdev, adapt);
