@@ -5,6 +5,7 @@
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
 #include <linux/i2c.h>
+#include <linux/delay.h>
 #include "hid_composite.h"
 #include "hid-i2c.h"
 
@@ -86,18 +87,19 @@ static uint32_t report_types[HID_I2C_USAGES_MAX] = {
     [HID_I2C_RX_REPORT_IDX] = HID_INPUT_REPORT,
 };
 
-
 struct hid_i2c_t {
     struct hid_subdevice *hsdev;
     struct hid_composite_callbacks callbacks;
-	struct completion completion;
 	spinlock_t data_lock;
+    struct mutex bus_lock;
+
     struct i2c_adapter adapter;
     uint8_t settings_buffer[HID_I2C_PACKET_SIZE];
     uint8_t rx_buffer[HID_I2C_PACKET_SIZE];
     uint8_t tx_buffer[HID_I2C_PACKET_SIZE];
 	struct hid_attribute_info info[HID_I2C_USAGES_MAX];
     int minor;
+    u32 report_id;
 };
 
 
@@ -123,56 +125,10 @@ static int hid_i2c_parse_report(struct platform_device *pdev)
 			continue;
 	}
 
+    adapt->report_id = adapt->info[0].report_id;
+
 	return 0;
 }
-
-
-static int hid_i2c_hw_transaction(struct hid_i2c_t *adapt, i2c_xfer_slave_addr_t addr, 
-        i2c_xfer_flags_t flags, i2c_xfer_dir_t dir, uint8_t *buf,  i2c_length_t length)
-{
-    struct hid_i2c_rx_report_t *rx;
-    struct hid_i2c_tx_report_t *tx;
-    int ret;
-
-    memset(adapt->tx_buffer, 0x0, HID_I2C_PACKET_SIZE);
-    memset(adapt->rx_buffer, 0x0, HID_I2C_PACKET_SIZE);
-
-    tx = (struct hid_i2c_tx_report_t *)adapt->tx_buffer;
-    tx->request = HID_I2C_TX_REPORT_REQUEST;
-    tx->flags = flags;
-    tx->dir = dir;
-    tx->addr = addr;
-    tx->subaddr = 0;
-    tx->subaddr_size = 0;
-    tx->length = length;
-
-    if (tx->length > 0)
-        memcpy(&tx->data[0], &buf[0], length);
-
-    ret = hid_composite_output_attr_set_raw_value(adapt->hsdev,  
-        adapt->info[HID_I2C_TX_REPORT_IDX].report_id,
-		(uint8_t *)&adapt->tx_buffer[0], HID_I2C_PACKET_SIZE);
-	if (ret)
-		return ret;
-    
-    ret = hid_composite_get_report(adapt->hsdev, report_types[HID_I2C_RX_REPORT_IDX],
-        HID_USAGE_I2C,
-        usage_addresses[HID_I2C_RX_REPORT_IDX], 
-        adapt->info[HID_I2C_RX_REPORT_IDX].report_id, 
-        HID_COMPOSITE_SYNC, (uint8_t *)&adapt->rx_buffer[0], HID_I2C_PACKET_SIZE, 30);
-    if(ret)
-        return -ETIMEDOUT;
-
-    rx = (struct hid_i2c_rx_report_t *)adapt->rx_buffer;
-    if (rx->status != 0)
-        return rx->status;
-
-    if (rx->length > 0 && dir == I2C_READ)
-        memcpy(buf, rx->data, rx->length);
-
-    return 0;
-}
-
 
 static int hid_i2c_capture_sample(struct hid_subdevice *hsdev,
 			u32 usage_id, size_t raw_len, char *raw_data,
@@ -224,6 +180,60 @@ static int hid_i2c_resume(struct hid_subdevice *hsdev, void *priv)
 #endif
 
 
+static int hid_i2c_hw_transaction(struct hid_i2c_t *adapt, i2c_xfer_dir_t dir, uint8_t *buf)
+{
+    
+    struct hid_i2c_rx_report_t *rx;
+    int ret;
+
+    ret = hid_composite_output_attr_set_raw_value(adapt->hsdev,  
+        adapt->info[HID_I2C_TX_REPORT_IDX].report_id,
+		(uint8_t *)&adapt->tx_buffer[0], HID_I2C_PACKET_SIZE);
+	if (ret)
+		return ret;
+
+    usleep_range(100, 200);
+    ret = hid_composite_get_report(adapt->hsdev, report_types[HID_I2C_RX_REPORT_IDX],
+        HID_USAGE_I2C,
+        usage_addresses[HID_I2C_RX_REPORT_IDX], 
+        adapt->info[HID_I2C_RX_REPORT_IDX].report_id, 
+        HID_COMPOSITE_SYNC, (uint8_t *)&adapt->rx_buffer[0], HID_I2C_PACKET_SIZE, HZ * 5);
+    if(ret)
+        return -ETIMEDOUT;
+
+    rx = (struct hid_i2c_rx_report_t *)adapt->rx_buffer;
+    if (rx->status != 0)
+        return -rx->status;
+
+    if (rx->length > 0 && dir == I2C_READ)
+        memcpy(buf, rx->data, rx->length);
+
+    return 0;
+}
+
+static inline void hid_i2c_fill_tx_packet(
+        struct hid_i2c_t *adapt, i2c_xfer_slave_addr_t addr, 
+        i2c_xfer_sub_addr_t subaddr,  i2c_length_t subaddr_len,
+        i2c_xfer_flags_t flags, i2c_xfer_dir_t dir, uint8_t *buf,  
+        i2c_length_t length) {
+
+    struct hid_i2c_tx_report_t *tx;
+
+    memset(adapt->tx_buffer, 0x0, HID_I2C_PACKET_SIZE);
+    memset(adapt->rx_buffer, 0x0, HID_I2C_PACKET_SIZE);
+
+    tx = (struct hid_i2c_tx_report_t *)adapt->tx_buffer;
+    tx->request = HID_I2C_TX_REPORT_REQUEST;
+    tx->flags = flags;
+    tx->dir = dir;
+    tx->addr = addr;
+    tx->subaddr = subaddr;
+    tx->subaddr_size = subaddr_len;
+    tx->length = length;
+
+    if (tx->length > 0)
+        memcpy(&tx->data[0], buf, length);
+}
 
 /*
  * Initialize the transfer information and start the I2C bus transfer.
@@ -243,34 +253,89 @@ static int hid_i2c_master_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs
     if (!adapt)
         return -ENODEV;
 
+    mutex_lock(&adapt->bus_lock);
     for (i = 0; i < num; ++i)
     {
         offset = 0;
-        flags = I2C_FLAGS_DEFAULT;
         remaining = msgs[i].len;
+        flags = I2C_FLAGS_DEFAULT;
+        if (msgs[i].flags & I2C_M_NOSTART)
+            flags |= I2C_FLAGS_NO_START;
+
+        dir = ((msgs[i].flags & I2C_M_RD) != 0) ? I2C_READ : I2C_WRITE;
         do {
             length = _min(_max(0, remaining), HID_I2C_DATA_SIZE);
             remaining = _max(remaining - length, 0);
-            
-            if (msgs[i].flags & I2C_M_NOSTART)
-                flags |= I2C_FLAGS_NO_START;
-        
+
             if (remaining > 0)
                 flags |= I2C_FLAGS_NO_STOP;
-
-            dir = ((msgs[i].flags & I2C_M_RD) != 0) ? I2C_READ : I2C_WRITE;
         
             buf = &msgs[i].buf[offset];
-            ret = hid_i2c_hw_transaction(adapt, msgs[i].addr, flags, dir, buf, length);
-            if (ret)
-                return ret;
+            hid_i2c_fill_tx_packet(adapt, msgs[i].addr, 0, 0, flags, dir, buf, length);
+            ret = hid_i2c_hw_transaction(adapt, dir, buf);
+            if (ret) 
+                goto err_unlock;
             //printk("ret: %d i: %d dir: %d flags: %d length: %d remain: %d\n", ret, i, dir, flags, length, remaining);
             offset += length;
 
         } while (remaining > 0);
     }
-    return num;
+    ret = num;
+
+err_unlock:
+    mutex_unlock(&adapt->bus_lock);
+    return ret;
 }
+
+static int hid_i2c_master_xfer_atomic(struct i2c_adapter *adapter, struct i2c_msg *msgs,
+				int num)
+{
+    struct hid_i2c_t *adapt = i2c_get_adapdata(adapter);
+    int ret, remaining, offset = 0, length;
+    i2c_xfer_flags_t flags = I2C_FLAGS_DEFAULT;
+    i2c_xfer_dir_t dir;
+    uint8_t *buf;
+
+    if (!adapt)
+        return -ENODEV;
+    
+    if (num != 2 || msgs[0].len > 4 || msgs[0].len <= 0) {
+        return hid_i2c_master_xfer(adapter, msgs, num);
+    }
+    else
+    {
+        mutex_lock(&adapt->bus_lock);
+        offset = 0;
+        dir = ((msgs[1].flags & I2C_M_RD) != 0) ? I2C_READ : I2C_WRITE;
+        remaining = msgs[1].len;
+        flags = I2C_FLAGS_DEFAULT;
+        if (msgs[1].flags & I2C_M_NOSTART)
+            flags |= I2C_FLAGS_NO_START;
+        
+        do {
+            length = _min(_max(0, remaining), HID_I2C_DATA_SIZE);
+            remaining = _max(remaining - length, 0);
+            if (remaining > 0)
+                flags |= I2C_FLAGS_NO_STOP;
+
+            buf = &msgs[1].buf[offset];
+            hid_i2c_fill_tx_packet(adapt, msgs[1].addr, *(i2c_xfer_sub_addr_t *)msgs[0].buf, msgs[0].len, flags, dir, buf, length);
+            ret = hid_i2c_hw_transaction(adapt, dir, buf);
+            if (ret) 
+                goto err_unlock;
+            //printk("ret: %d i: %d dir: %d flags: %d length: %d remain: %d\n", ret, i, dir, flags, length, remaining);
+            offset += length;
+
+        } while (remaining > 0);
+    }
+    
+    ret = num;
+
+err_unlock:
+    mutex_unlock(&adapt->bus_lock);
+    return ret;
+}
+
 
 static u32 hid_i2c_functionality(struct i2c_adapter *adap)
 {
@@ -279,8 +344,54 @@ static u32 hid_i2c_functionality(struct i2c_adapter *adap)
 
 static const struct i2c_algorithm hid_i2c_algo = {
 	.master_xfer	= hid_i2c_master_xfer,
+    .master_xfer_atomic = hid_i2c_master_xfer_atomic,
 	.functionality	= hid_i2c_functionality,
 };
+
+
+#if defined(CONFIG_OF_GPIO)
+static const struct of_device_id hid_i2c_dt_match[] = {
+	{ .compatible = "composite,hid-i2c" },
+	{ /*sentinel*/ },
+};
+MODULE_DEVICE_TABLE(of, hid_i2c_dt_match);
+
+static int hid_i2c_assoc_to_dts(struct platform_device *pdev) {
+	struct hid_i2c_t *adapt = platform_get_drvdata(pdev);
+	struct device_node *np;
+    struct i2c_adapter *adapter = &adapt->adapter;
+	int ret = 0;
+    u32 report_id = 0;
+    const char *name;
+
+	for_each_matching_node(np, hid_i2c_dt_match) {
+		if (!of_device_is_available(np))
+			continue;
+
+        if (of_property_read_u32(np, "report-id", &report_id) || report_id != adapt->report_id) {
+            hid_err(adapt->hsdev->hdev, 
+						"hid i2c failed to find a node with report-id (%hi), not match (%hi)!\n", 
+						adapt->report_id, report_id);
+            of_node_put(np);
+			continue;
+		}
+		
+        adapter->dev.of_node = np;
+		pdev->dev.of_node = np;
+		pdev->dev.fwnode = of_fwnode_handle(pdev->dev.of_node);
+		ret = of_property_read_string(np, "bus-name", &name);
+		if (!ret) {
+            snprintf(adapter->name, sizeof(adapter->name),
+		        "HID I2C: %s", name);
+        }
+
+		of_node_put(pdev->dev.of_node);
+		hid_info(adapt->hsdev->hdev, "hid i2c associate to devicetree node!\n");
+	}
+
+	return ret;
+}
+#endif
 
 
 static int hid_i2c_platform_probe(struct platform_device *pdev)
@@ -289,6 +400,9 @@ static int hid_i2c_platform_probe(struct platform_device *pdev)
 	struct hid_i2c_t *adapt;
 	struct i2c_adapter *adapter;
 	int ret;
+
+    if (!hsdev)
+		return 0;
 
 	adapt = devm_kzalloc(&pdev->dev, sizeof(*adapt), GFP_KERNEL);
 	if (!adapt)
@@ -303,7 +417,7 @@ static int hid_i2c_platform_probe(struct platform_device *pdev)
     adapt->hsdev = hsdev;
 	adapt->minor = hsdev->id;
     spin_lock_init(&adapt->data_lock);
-    init_completion(&adapt->completion);
+    mutex_init(&adapt->bus_lock);
 	platform_set_drvdata(pdev, adapt);
 
 	ret = hid_i2c_parse_report(pdev);
@@ -326,10 +440,13 @@ static int hid_i2c_platform_probe(struct platform_device *pdev)
  	adapter->owner = THIS_MODULE;
 	adapter->algo = &hid_i2c_algo;
 	adapter->dev.parent = &pdev->dev;
-    adapter->timeout = HZ;
+    adapter->timeout = HZ * 5;
     adapter->retries = 5;
     snprintf(adapter->name, sizeof(adapter->name),
 		 "HID I2C Controller %s", dev_name(&pdev->dev));
+#if defined(CONFIG_OF_GPIO)
+    hid_i2c_assoc_to_dts(pdev);
+#endif
     i2c_set_adapdata(adapter, adapt);
 
 	ret = devm_i2c_add_adapter(&pdev->dev, adapter);
@@ -354,9 +471,9 @@ io_stop_clean:
 static int hid_i2c_platform_remove(struct platform_device *pdev)
 {
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
-    struct hid_i2c_t *adapt = platform_get_drvdata(pdev);
 
-    complete_all(&adapt->completion);
+    if (!hsdev)
+		return 0;
 
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
@@ -378,6 +495,9 @@ static struct platform_driver hid_i2c_platform_driver = {
 	.id_table = hid_i2c_ids,
 	.driver = {
 		.name	= KBUILD_MODNAME,
+#if defined(CONFIG_OF_GPIO)
+        .of_match_table = of_match_ptr(hid_i2c_dt_match)
+#endif
 	},
 	.probe		= hid_i2c_platform_probe,
 	.remove		= hid_i2c_platform_remove,
