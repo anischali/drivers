@@ -234,7 +234,8 @@ static void  sbs_unit_adjustment(enum power_supply_property psp, union power_sup
 		/* sbs provides time to empty and time to full in minutes.
 		 * Convert to seconds
 		 */
-		val->intval *= TIME_UNIT_CONVERSION;
+		if (val->intval != 0xFFFF)
+			val->intval *= TIME_UNIT_CONVERSION;
 		break;
 
 	default:

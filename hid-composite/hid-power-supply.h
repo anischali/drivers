@@ -1,5 +1,5 @@
-#ifndef __HID_SBSTEM_H
-#define __HID_SBSTEM_H
+#ifndef __HID_POWER_SUPPLY_H
+#define __HID_POWER_SUPPLY_H
 
 #define TIME_UNIT_CONVERSION		60
 #define TEMP_KELVIN_TO_CELSIUS		2731
