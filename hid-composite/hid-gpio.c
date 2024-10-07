@@ -71,6 +71,7 @@ struct hid_gpio_t {
 	unsigned long irq_mask;
 	unsigned long gpio_mask;
 	unsigned long gpio_mask_previous;
+	u32  report_id;
 };
 
 static void hid_gpio_poll_callback(struct work_struct *work);
@@ -167,6 +168,7 @@ static int hid_gpio_parse_report(struct platform_device *pdev)
 	}
 
 	gpio->gpio_num = gpio->info[0].size;
+	gpio->report_id = gpio->info[0].report_id;
 
 	return 0;
 }
@@ -484,12 +486,12 @@ static int hid_gpio_allocate_buffers(struct platform_device *pdev)
 	return 0;
 }
 
+#if defined(CONFIG_OF_GPIO)
 static const struct of_device_id hid_gpio_dt_match[] = {
 	{ .compatible = "composite,hid-gpio" },
 	{ /*sentinel*/ },
 };
 MODULE_DEVICE_TABLE(of, hid_gpio_dt_match);
-#if defined(CONFIG_OF_GPIO)
 static int hid_gpio_of_xlate(struct gpio_chip *chip,
 				  const struct of_phandle_args *spec,
 				  u32 *flags)
@@ -506,6 +508,43 @@ static int hid_gpio_of_xlate(struct gpio_chip *chip,
 		return -EINVAL;
 
 	return spec->args[0];
+}
+
+static int hid_gpio_assoc_to_dts(struct platform_device *pdev) {
+	struct hid_gpio_t *gpio = platform_get_drvdata(pdev);
+	struct device_node *np;
+	struct gpio_chip *gc;
+	int ret = 0;
+	u32 report_id = 0;
+
+	gc = &gpio->gpio_chip;
+	for_each_matching_node(np, hid_gpio_dt_match) {
+		if (!of_device_is_available(np))
+			continue;
+
+		if (of_property_read_u32(np, "report-id", &report_id) || report_id != gpio->report_id) {
+			hid_err(gpio->hsdev->hdev, 
+						"hid gpio failed to find a node with report-id (%hi), not match (%hi)!\n", 
+						gpio->report_id, report_id);
+			of_node_put(np);
+			continue;
+		}
+		
+		pdev->dev.of_node = np;
+		gc->of_node = np;
+		gc->of_gpio_n_cells = 2;
+		gc->of_xlate = hid_gpio_of_xlate;
+		pdev->dev.fwnode = of_fwnode_handle(pdev->dev.of_node);
+		ret = of_property_read_u32(gc->of_node, "gpio,base",
+				   &gpio->base);
+		if (ret)
+			gpio->base = -1;
+
+		of_node_put(pdev->dev.of_node);
+		hid_info(gpio->hsdev->hdev, "hid gpio associate to devicetree node!\n");
+	}
+
+	return ret;
 }
 #endif
 
@@ -664,24 +703,8 @@ static int hid_gpio_platform_probe(struct platform_device *pdev)
     
 	gc = &gpio->gpio_chip;
 #if defined(CONFIG_OF_GPIO)
-	pdev->dev.of_node = of_find_matching_node(NULL, hid_gpio_dt_match);
-	if (pdev->dev.of_node) {
-		gc->of_node = pdev->dev.of_node;
-		gc->of_gpio_n_cells = 2;
-		gc->of_xlate = hid_gpio_of_xlate;
-		pdev->dev.fwnode = of_fwnode_handle(pdev->dev.of_node);
-		ret = of_property_read_u32(gc->of_node, "gpio,base",
-				   &gpio->base);
-		if (ret)
-			gpio->base = -1;
-
-		//gpio->has_irq = (gpio->has_irq && of_property_read_bool(gc->of_node, "interrupt-controller"));
-
-		of_node_put(pdev->dev.of_node);
-		hid_info(gpio->hsdev->hdev, "hid gpio associate to devicetree node!\n");
-	}
+	hid_gpio_assoc_to_dts(pdev);
 #endif
-
 	hid_gpio_hw_init(gpio);
 
 	gc->direction_input  = hid_gpio_direction_input;
@@ -766,7 +789,9 @@ static struct platform_driver hid_gpio_platform_driver = {
 	.id_table = hid_gpio_ids,
 	.driver = {
 		.name	= KBUILD_MODNAME,
+#if defined(CONFIG_OF_GPIO)
 		.of_match_table = of_match_ptr(hid_gpio_dt_match)
+#endif
 	},
 	.probe		= hid_gpio_platform_probe,
 	.remove		= hid_gpio_platform_remove,
