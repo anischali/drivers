@@ -731,8 +731,10 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 	hid_set_drvdata(hdev, ldev);
 
 	ret = hid_parse(hdev);
-	if (ret)
+	if (ret) {
+		hid_err(hdev, "failed to parse hid with errno %d!\n", ret);
 		return ret;
+	}
 
 	ldev->hdev = hdev;
 	mutex_init(&ldev->mutex);
@@ -742,8 +744,10 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 	INIT_LIST_HEAD(&hdev->inputs);
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
-	if (ret)
+	if (ret) {
+		hid_err(hdev, "failed to hw start with errno %d!\n", ret);
 		return ret;
+	}
 
 	ldev->id = ida_simple_get(&hid_composite_ida, 0, 0, GFP_KERNEL);
 	
