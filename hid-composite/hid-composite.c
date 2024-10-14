@@ -12,11 +12,12 @@
 #include <linux/list.h>
 #include "hid_composite.h"
 #include "hid-ids.h"
+#include <linux/input.h>
 
-DEFINE_IDA(hid_composite_ida);
+static DEFINE_IDA(hid_composite_ida);
 
 /**
- * struct hid_sensor_hub_callbacks_list - Stores callback list
+ * struct hid_composite_callbacks_list - Stores callback list
  * @list:		list head.
  * @usage_id:		usage id for a physical device.
  * @hsdev:		Stored hid instance for current hub device.
@@ -43,6 +44,16 @@ struct hid_composite_device {
 	int id;
 };
 
+static const struct hid_composite_quirks {
+	u16 bus; 
+	u32 idVendor;
+	u32 idProduct;
+	u32 quirks;
+} _hid_composite_quirks[] = {
+	{ BUS_I2C, EXAMPLE_VENDOR_ID, HID_ANY_ID, HID_COMPOSITE_QUIRK_NO_IRQ_EVENTS },
+	{ 0, 0 },
+};
+
 static inline struct hid_report *hid_composite_report(int id, struct hid_device *hdev,
 						int dir)
 {
@@ -58,6 +69,28 @@ static inline struct hid_report *hid_composite_report(int id, struct hid_device 
 }
 
 
+
+static u32 hid_composite_lookup_quirks(struct hid_device *hdev) {
+	u32 quirks = 0;
+	u32 i, vid, pid, bus;
+	
+	bus = hdev->bus;
+	vid = hdev->vendor;
+	pid = hdev->product;
+
+	for (i = 0; _hid_composite_quirks[i].idVendor; i++) {
+		if (_hid_composite_quirks[i].idVendor == vid &&
+		    (_hid_composite_quirks[i].idProduct == HID_ANY_ID ||
+		     _hid_composite_quirks[i].idProduct == pid) && 
+			(_hid_composite_quirks[i].bus == HID_BUS_ANY ||
+		     _hid_composite_quirks[i].bus == bus)) {
+
+			quirks = _hid_composite_quirks[i].quirks;
+		}
+	}
+
+	return quirks;
+}
 
 /**
  * @brief 
@@ -482,12 +515,13 @@ EXPORT_SYMBOL_GPL(hid_composite_output_attr_set_raw_value);
 int hid_composite_get_raw_value(struct hid_subdevice *hsdev,  int report_id, int report_type, void *data, size_t size)
 {
 	struct hid_composite_device *cdev = hid_get_drvdata(hsdev->hdev);
+	uint8_t *ptr = (uint8_t *)data;
 	int ret = 0;
 
 	mutex_lock(&cdev->mutex);
 
 	ret = hid_hw_raw_request(hsdev->hdev, report_id, 
-	 			data, size, report_type, HID_REQ_GET_REPORT);
+	 			ptr, size, report_type, HID_REQ_GET_REPORT);
 	if (ret < 0) {
 		mutex_unlock(&cdev->mutex);
 		return ret;
@@ -673,7 +707,7 @@ static int hid_composite_suspend(struct hid_device *hdev, pm_message_t message)
 	struct hid_composite_callbacks_list *callback;
 	unsigned long flags;
 
-	hid_dbg(hdev, " sensor_hub_suspend\n");
+	hid_dbg(hdev, " hid_composite_suspend\n");
 	spin_lock_irqsave(&cdev->dyn_callback_lock, flags);
 	list_for_each_entry(callback, &cdev->dyn_callback_list, list) {
 		if (callback->usage_callback->suspend)
@@ -691,7 +725,7 @@ static int hid_composite_resume(struct hid_device *hdev)
 	struct hid_composite_callbacks_list *callback;
 	unsigned long flags;
 
-	hid_dbg(hdev, " sensor_hub_resume\n");
+	hid_dbg(hdev, " hid_composite_resume\n");
 	spin_lock_irqsave(&cdev->dyn_callback_lock, flags);
 	list_for_each_entry(callback, &cdev->dyn_callback_list, list) {
 		if (callback->usage_callback->resume)
@@ -723,6 +757,7 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 	int ret, i, dev_cnt;
 	struct hid_subdevice *hsdev = NULL, *last_hsdev = NULL, *collection_hsdev = NULL;
 	char *name;
+	u32 _quirks;
 
 	ldev = devm_kzalloc(&hdev->dev, sizeof(*ldev), GFP_KERNEL);
 	if (!ldev)
@@ -740,17 +775,20 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 	mutex_init(&ldev->mutex);
 	spin_lock_init(&ldev->dyn_callback_lock);
 	spin_lock_init(&ldev->lock);
-	
 	INIT_LIST_HEAD(&hdev->inputs);
+
+	ldev->id = ida_simple_get(&hid_composite_ida, 0, 0, GFP_KERNEL);
+	if (ldev->id < 0)
+		return ldev->id;
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret) {
+		ida_simple_remove(&hid_composite_ida, ldev->id);
 		hid_err(hdev, "failed to hw start with errno %d!\n", ret);
 		return ret;
 	}
 
-	ldev->id = ida_simple_get(&hid_composite_ida, 0, 0, GFP_KERNEL);
-	
+	_quirks = hid_composite_lookup_quirks(hdev);
 	INIT_LIST_HEAD(&ldev->dyn_callback_list);
 	ldev->hid_composite_client_cnt = 0;
 
@@ -790,6 +828,7 @@ static int hid_composite_probe(struct hid_device *hdev, const struct hid_device_
 			hsdev->product_id = hdev->product;
 			hsdev->usage = collection->usage;
 			hsdev->id = ldev->id;
+			hsdev->quirks = _quirks;
 			hsdev->mutex_ptr = devm_kzalloc(&hdev->dev,
 							sizeof(struct mutex),
 							GFP_KERNEL);

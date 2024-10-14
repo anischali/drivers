@@ -10,6 +10,16 @@
 #define HID_GROUP_COMPOSITE 0x0005U
 #endif
 
+
+#ifndef EXAMPLE_VENDOR_ID
+#define EXAMPLE_VENDOR_ID 0x1DC0
+#endif
+
+enum _quirks {
+	HID_COMPOSITE_QUIRK_NO_IRQ_EVENTS = BIT(0),
+};
+
+
 #define _min(x, y) ((x < y) ? x : y)
 #define _max(x, y) ((x > y) ? x : y)
 
@@ -31,7 +41,7 @@ struct hid_subdevice_pending {
 
 
 /**
- * struct hid_sensor_hub_attribute_info - Attribute info
+ * struct hid_composite_attribute_info - Attribute info
  * @usage_id:		Parent usage id of a physical device.
  * @attrib_id:		Attribute id for this attribute.
  * @report_id:		Report id in which this information resides.
@@ -59,12 +69,13 @@ struct hid_attribute_info {
 
 struct hid_subdevice {
 	int id;
-	struct hid_device *hdev;
+	int start_collection_index;
+	int end_collection_index;
 	u32 vendor_id;
 	u32 product_id;
 	u32 usage;
-	int start_collection_index;
-	int end_collection_index;
+	u32 quirks;
+	struct hid_device *hdev;
 	struct mutex *mutex_ptr;
 	struct hid_subdevice_pending pending;
 	struct hid_attribute_info *info;
@@ -73,7 +84,7 @@ struct hid_subdevice {
 
 
 /**
- * struct hid_sensor_hub_callbacks - Client callback functions
+ * struct hid_composite_callbacks - Client callback functions
  * @pdev:		Platform device instance of the client driver.
  * @suspend:		Suspend callback.
  * @resume:		Resume callback.
