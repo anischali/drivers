@@ -25,7 +25,8 @@ enum hid_firmware_usage {
     HID_USAGE_FIRMWARE_VERSION                            = 0x990018U,
     HID_USAGE_FIRMWARE_HW_REVISION                        = 0x990019U,
     HID_USAGE_FIRMWARE_BOARD_TYPE                         = 0x99001AU,
-    HID_USAGE_FIRMWARE_BOARD_ID                           = 0x99001BU,           
+    HID_USAGE_FIRMWARE_BOARD_ID                           = 0x99001BU,
+    HID_USAGE_FIRMWARE_UUID                               = 0x99001CU, 
 };
 
 #endif
