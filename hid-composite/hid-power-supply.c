@@ -55,7 +55,9 @@ struct hid_power_supply {
 	bool ready;
 	size_t ps_data_size;
 	int minor;
+	int index;
 	int battery_status;
+	int usage_id;
 	int type;
 };
 
@@ -76,11 +78,12 @@ static const char *hid_power_supply_names[] = {
 	[POWER_SUPPLY_TYPE_WIRELESS] = "hid-wireless",
 };
 
+static struct ida hid_power_supply_idas[POWER_SUPPLY_TYPE_WIRELESS + 1] = {0};
+
 
 static const struct hid_sbs_property_usage sbs_power_supply_prop_usages[] = {
 	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_STATUS, HID_SBS_POWER_SUPPLY_BATTERY_STATUS, 0),
 	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_ONLINE, HID_SBS_POWER_SUPPLY_CHARGER_STATUS, 1),
-	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_TYPE, HID_SBS_POWER_SUPPLY_TYPE, 1),
 	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, HID_SBS_CHARGER_CHARGING_CURRENT, 0),
 	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE, HID_SBS_CHARGER_CHARGING_VOLTAGE, 0),
 	HID_SBS_PROPERTY_USAGE(POWER_SUPPLY_PROP_PRESENT, HID_SBS_BATTERY_PRESENT, 1),
@@ -158,7 +161,7 @@ static int hid_power_supply_hw_read(struct hid_power_supply *ps, bool force)
 	reinit_completion(&ps->data_completion);
 	/* get a report with all values through requesting one value */
 	ret = hid_composite_get_report(ps->hsdev, HID_INPUT_REPORT,
-			HID_SBS_POWER_SUPPLY_SYSTEM_USAGE, ps->ps_data[0].info.usage_id,
+			ps->usage_id, ps->ps_data[0].info.usage_id,
 			ps->ps_data[0].info.report_id, HID_COMPOSITE_ASYNC,  NULL, 0, 0);
 	ret = wait_for_completion_interruptible_timeout(
 		&ps->data_completion, msecs_to_jiffies(1000));
@@ -182,21 +185,6 @@ static int hid_power_supply_hw_write(struct hid_power_supply *ps, uint8_t *value
 	
 	return hid_power_supply_hw_read(ps, true);
 }
-
-static int hid_power_supply_get_type(struct hid_power_supply *ps)
-{
-	struct hid_power_supply_usage_info *usage;
-
-	hid_power_supply_hw_read(ps, true);
-
-	usage = hid_power_supply_get_usage(ps->ps_data,
-			ps->ps_data_size, HID_SBS_POWER_SUPPLY_TYPE);
-	if (!usage)
-		return 0;
-
-	return usage->value.intval;
-}
-
 
 static void  sbs_unit_adjustment(enum power_supply_property psp, union power_supply_propval *val)
 {
@@ -341,7 +329,7 @@ static size_t hid_power_supply_usages_count(struct hid_power_supply *ps,
 	{
 		ret = hid_composite_get_attribute_info(ps->hsdev,
 				HID_INPUT_REPORT,
-				HID_SBS_POWER_SUPPLY_SYSTEM_USAGE,
+				ps->usage_id,
 				sbs_props[i].usage, &info);
 		if (!ret)
 			++count;
@@ -374,7 +362,7 @@ static inline int hid_power_supply_allocate_properties(
 	{
 		ret = hid_composite_get_attribute_info(ps->hsdev,
 			HID_INPUT_REPORT,
-			HID_SBS_POWER_SUPPLY_SYSTEM_USAGE,
+			ps->usage_id,
 			sbs[i].usage,
 			&info);
 
@@ -399,7 +387,7 @@ static int hid_power_supply_get_available_usages(struct hid_power_supply *ps,
 		cnt < ps_info_len; ++i) {
 		ret = hid_composite_get_attribute_info(hsdev,
 			HID_INPUT_REPORT,
-			HID_SBS_POWER_SUPPLY_SYSTEM_USAGE,
+			ps->usage_id,
 			props[i].usage,
 			&info);
 
@@ -516,7 +504,7 @@ static int hid_power_supply_allocate_power_supply(struct platform_device *pdev)
 	if	(cnt <= 0)
 		return -ENODEV;
 
-	snprintf(ps->ps_name, 32, "%s-%d", hid_power_supply_names[ps->type], ps->minor);
+	snprintf(ps->ps_name, 20, "%s-%d:%d", hid_power_supply_names[ps->type], ps->minor, ps->index);
 	ps->power_supply_desc.name = ps->ps_name;
 	ps->power_supply_desc.type = ps->type,
 	ps->power_supply_desc.get_property = hid_power_supply_get_property,
@@ -551,6 +539,7 @@ static int hid_power_supply_probe(struct platform_device *pdev)
 {
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
 	struct hid_power_supply *ps;
+	int type = platform_get_device_id(pdev)->driver_data;
 
 	int ret;
 
@@ -561,6 +550,10 @@ static int hid_power_supply_probe(struct platform_device *pdev)
 	if (!ps)
 		return -ENOMEM;
 
+	ps->index = ida_simple_get(&hid_power_supply_idas[type], 0, 32, GFP_KERNEL);
+	if (ps->index < 0)
+		return ps->index;
+
 	ret = hid_composite_device_open(hsdev);
 	if (ret)
 		return ret;
@@ -570,8 +563,11 @@ static int hid_power_supply_probe(struct platform_device *pdev)
 	spin_lock_init(&ps->data_lock);
 	init_completion(&ps->data_completion);
 
+	ps->index = ret;
 	ps->hsdev = hsdev;
-	ps->minor = ((struct hidraw *) hsdev->hdev->hidraw)->minor;
+	ps->minor = hsdev->id;
+	ps->type = type;
+	ps->usage_id = HID_SBS_POWER_SUPPLY_TYPE_UNKNWON + type;
 
 	ps->callbacks.capture_sample = hid_power_supply_capture_sample;
 	ps->callbacks.send_event = hid_power_supply_proc_event;
@@ -581,7 +577,7 @@ static int hid_power_supply_probe(struct platform_device *pdev)
 #endif
 	ps->callbacks.pdev = pdev;
 	hid_composite_register_callback(hsdev,
-		HID_SBS_POWER_SUPPLY_SYSTEM_USAGE, &ps->callbacks);
+		ps->usage_id, &ps->callbacks);
 
 	platform_set_drvdata(pdev, ps);
 
@@ -589,22 +585,24 @@ static int hid_power_supply_probe(struct platform_device *pdev)
 	if (ret)
 		goto cleanup;
 
-	ps->type = hid_power_supply_get_type(ps);
-
 	ret = hid_power_supply_allocate_power_supply(pdev);
 	if (ret)
 		goto cleanup;
 	
+	hid_power_supply_hw_read(ps, true);
+
 	ps->ready = true;
 
 	return 0;
 
 cleanup:
+	ida_simple_remove(&hid_power_supply_idas[type], ps->index);
 	if (ps->power_supply)
 		power_supply_unregister(ps->power_supply);
+	
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
-	hid_composite_remove_callback(hsdev, HID_SBS_POWER_SUPPLY_SYSTEM_USAGE);
+	hid_composite_remove_callback(hsdev, ps->usage_id);
 
 	return ret;
 }
@@ -622,15 +620,28 @@ static int hid_power_supply_remove(struct platform_device *pdev)
 
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
-	hid_composite_remove_callback(hsdev, HID_SBS_POWER_SUPPLY_SYSTEM_USAGE);
+	hid_composite_remove_callback(hsdev, ps->usage_id);
+	ida_simple_remove(&hid_power_supply_idas[ps->type], ps->index);
+	
 	return 0;
 }
 
+
 static const struct platform_device_id hid_power_supply_platform_ids[] = {
-	{
-		/* Format: HID-COMPOSITE-usage_id_in_hex_lowercase */
-		.name = "HID-COMPOSITE-850000",
-	},
+	/* Format: HID-COMPOSITE-usage_id_in_hex_lowercase */
+	{ .name = "HID-COMPOSITE-8500a0", .driver_data = POWER_SUPPLY_TYPE_UNKNOWN },
+	{ .name = "HID-COMPOSITE-8500a1", .driver_data = POWER_SUPPLY_TYPE_BATTERY },
+	{ .name = "HID-COMPOSITE-8500a2", .driver_data = POWER_SUPPLY_TYPE_UPS },
+	{ .name = "HID-COMPOSITE-8500a3", .driver_data = POWER_SUPPLY_TYPE_MAINS },
+	{ .name = "HID-COMPOSITE-8500a4", .driver_data = POWER_SUPPLY_TYPE_USB },
+	{ .name = "HID-COMPOSITE-8500a5", .driver_data = POWER_SUPPLY_TYPE_USB_DCP },
+	{ .name = "HID-COMPOSITE-8500a6", .driver_data = POWER_SUPPLY_TYPE_USB_CDP },
+	{ .name = "HID-COMPOSITE-8500a7", .driver_data = POWER_SUPPLY_TYPE_USB_ACA },
+	{ .name = "HID-COMPOSITE-8500a8", .driver_data = POWER_SUPPLY_TYPE_USB_TYPE_C }, 
+	{ .name = "HID-COMPOSITE-8500a9", .driver_data = POWER_SUPPLY_TYPE_USB_PD },
+	{ .name = "HID-COMPOSITE-8500aa", .driver_data = POWER_SUPPLY_TYPE_USB_PD_DRP },
+	{ .name = "HID-COMPOSITE-8500ab", .driver_data = POWER_SUPPLY_TYPE_APPLE_BRICK_ID },
+	{ .name = "HID-COMPOSITE-8500ac", .driver_data = POWER_SUPPLY_TYPE_WIRELESS },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(platform, hid_power_supply_platform_ids);
@@ -643,8 +654,32 @@ static struct platform_driver hid_power_supply_driver = {
 	.probe = hid_power_supply_probe,
 	.remove = hid_power_supply_remove,
 };
-module_platform_driver(hid_power_supply_driver);
 
 MODULE_DESCRIPTION("HID Battery driver for USB HID based batteries");
 MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
 MODULE_LICENSE("GPL");
+
+
+
+static int __init hid_power_supply_init(void)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(hid_power_supply_idas); i++)
+		ida_init(&hid_power_supply_idas[i]);
+
+	return platform_driver_register(&hid_power_supply_driver);
+}
+
+static void hid_power_supply_exit(void)
+{
+	int i;
+
+	platform_driver_unregister(&hid_power_supply_driver);
+
+	for (i = 0; i < ARRAY_SIZE(hid_power_supply_idas); i++)
+		ida_destroy(&hid_power_supply_idas[i]);
+}
+
+module_init(hid_power_supply_init);
+module_exit(hid_power_supply_exit);
