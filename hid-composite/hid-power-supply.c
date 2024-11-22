@@ -141,7 +141,7 @@ hid_power_supply_get_usage(struct hid_power_supply_usage_info *usages,
 
 static inline int capacity_to_capacity_level(int capacity)
 {
-	return 	capacity <= 100 && capacity >= 90 ? POWER_SUPPLY_CAPACITY_LEVEL_FULL :
+	return 	capacity <= 100 && capacity >= 95 ? POWER_SUPPLY_CAPACITY_LEVEL_FULL :
 			capacity >= 75 ? POWER_SUPPLY_CAPACITY_LEVEL_HIGH :
 			capacity >= 40 ? POWER_SUPPLY_CAPACITY_LEVEL_NORMAL :
 			capacity >= 10 ? POWER_SUPPLY_CAPACITY_LEVEL_LOW :
@@ -272,8 +272,8 @@ static int hid_power_supply_get_property(struct power_supply *psy,
 		case POWER_SUPPLY_PROP_CURRENT_AVG:
 			val->intval = usage->value.intval;
 			sbs_unit_adjustment(psp, val);
-			
-			if (ps->battery_status == POWER_SUPPLY_STATUS_DISCHARGING && val->intval > 0)
+
+			if (ps->battery_status != POWER_SUPPLY_STATUS_CHARGING && val->intval > 0)
 				val->intval *= -1;
 
 			break;
