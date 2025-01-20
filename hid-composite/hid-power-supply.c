@@ -13,6 +13,7 @@
 #include <linux/power_supply.h>
 #include <linux/property.h>
 #include <linux/jiffies.h>
+#include <linux/thermal.h>
 #include "hid_composite.h"
 #include "hid-power-supply.h"
 
@@ -38,6 +39,34 @@ struct hid_power_supply_usage_info {
 	} value;
 };
 
+
+struct hid_power_supply_thermal_trip {
+	enum thermal_trip_type type;
+	int temp;
+	int hystr;
+};
+
+struct hid_power_supply_thermal {
+
+	struct thermal_zone_device *tzd;
+	struct hid_power_supply_thermal_trip *trips;
+	size_t ntrips;
+	int trip_mask;
+};
+
+struct hid_power_supply_thermal_trip hid_power_supply_trips[] = {
+	{
+		.type = THERMAL_TRIP_HOT,
+		.temp = THERMAL_TEMP_INVALID,
+		.hystr = 50,
+	},
+	{
+		.type = THERMAL_TRIP_CRITICAL,
+		.temp = THERMAL_TEMP_INVALID,
+		.hystr = 50,
+	},
+};
+
 struct hid_power_supply {
 	char ps_name[32];
 
@@ -50,7 +79,8 @@ struct hid_power_supply {
 	spinlock_t data_lock;
 	struct hid_power_supply_usage_info *ps_data_last;
 	struct hid_power_supply_usage_info *ps_data;
-
+	struct hid_power_supply_thermal tz;
+	
 	unsigned long last_update;
 	bool ready;
 	size_t ps_data_size;
@@ -514,6 +544,7 @@ static int hid_power_supply_allocate_power_supply(struct platform_device *pdev)
 	ps->power_supply_desc.num_properties = cnt;
 	ps->power_supply_desc.properties = props;
 	ps->power_supply_desc.use_for_apm = 0;
+	ps->power_supply_desc.no_thermal = true;
 
 	return hid_power_supply_add_power_supply(pdev, &ps->power_supply, &ps->power_supply_desc);
 }
@@ -534,6 +565,166 @@ static int hid_power_supply_resume(struct hid_subdevice *hsdev, void *priv)
 	return 0;
 }
 #endif
+
+static int hid_power_supply_read_temp(struct thermal_zone_device *tzd,
+		int *temp)
+{
+	struct hid_power_supply *ps;
+	union power_supply_propval val;
+	int ret;
+
+	WARN_ON(tzd == NULL);
+	ps = tzd->devdata;
+	ret = power_supply_get_property(ps->power_supply, POWER_SUPPLY_PROP_TEMP, &val);
+	if (ret)
+		return ret;
+
+	/* Convert tenths of degree Celsius to milli degree Celsius. */
+	*temp = val.intval * 100;
+
+	return ret;
+}
+
+static int hid_power_supply_get_trip_temp(struct thermal_zone_device *tzd, int trip, int *val) {
+
+	struct hid_power_supply *ps;
+	
+	WARN_ON(tzd == NULL);
+
+	ps = tzd->devdata;
+
+	if (trip < 0 || trip >= ps->tz.ntrips)
+		return -EINVAL;
+
+	*val = ps->tz.trips[trip].temp;
+
+	return 0;
+}
+
+static int hid_power_supply_set_trip_temp(struct thermal_zone_device *tzd, int trip, int val) {
+	struct hid_power_supply *ps;
+	
+	WARN_ON(tzd == NULL);
+
+	ps = tzd->devdata;
+
+	if (trip < 0 || trip >= ps->tz.ntrips)
+		return -EINVAL;
+
+	ps->tz.trips[trip].temp = val;
+
+	return 0;
+}
+
+int hid_power_supply_get_trip_hyst(struct thermal_zone_device *tzd, int trip, int *val) {
+struct hid_power_supply *ps;
+	
+	WARN_ON(tzd == NULL);
+
+	ps = tzd->devdata;
+
+	if (trip < 0 || trip >= ps->tz.ntrips)
+		return -EINVAL;
+
+	*val = ps->tz.trips[trip].hystr;
+
+	return 0;
+}
+
+int hid_power_supply_set_trip_hyst(struct thermal_zone_device *tzd, int trip, int val) {
+	struct hid_power_supply *ps;
+	
+	WARN_ON(tzd == NULL);
+
+	ps = tzd->devdata;
+
+	if (trip < 0 || trip >= ps->tz.ntrips)
+		return -EINVAL;
+
+	ps->tz.trips[trip].temp = val;
+
+	return 0;
+}
+
+int hid_power_supply_get_trip_type(struct thermal_zone_device *tzd, int trip, enum thermal_trip_type *type) {
+	struct hid_power_supply *ps;
+	
+	WARN_ON(tzd == NULL);
+
+	ps = tzd->devdata;
+
+	if (trip < 0 || trip >= ps->tz.ntrips)
+		return -EINVAL;
+
+	*type = ps->tz.trips[trip].type;
+
+	return 0;
+}
+
+
+void hid_power_supply_hot(struct thermal_zone_device *tzd) {
+	struct hid_power_supply *ps;
+	
+	WARN_ON(tzd == NULL);
+
+	ps = tzd->devdata;
+
+	hid_info(ps->hsdev->hdev, "power supply hot!\n");
+}
+
+void hid_power_supply_critical(struct thermal_zone_device *tzd) {
+	struct hid_power_supply *ps;
+	
+	WARN_ON(tzd == NULL);
+
+	ps = tzd->devdata;
+
+	hid_info(ps->hsdev->hdev, "power supply critical!\n");
+}
+
+static struct thermal_zone_device_ops ps_tzd_ops = {
+	.get_temp = hid_power_supply_read_temp,
+	.get_trip_temp	= hid_power_supply_get_trip_temp,
+	.get_trip_type	= hid_power_supply_get_trip_type,
+	.set_trip_temp	= hid_power_supply_set_trip_temp,
+	.get_trip_hyst =  hid_power_supply_get_trip_hyst,
+	//.hot = hid_power_supply_hot,
+	//.critical = hid_power_supply_critical,
+};
+
+
+static int hid_power_supply_register_thermal(struct hid_power_supply *ps) {
+	int ret, i;
+
+	/* Register battery zone device psy reports temperature */
+	for (i = 0; i < ps->power_supply_desc.num_properties; i++) {
+		if (ps->power_supply_desc.properties[i] == POWER_SUPPLY_PROP_TEMP) {
+			hid_info(ps->hsdev->hdev, "support temperature\n");
+			ps->tz.ntrips = ARRAY_SIZE(hid_power_supply_trips);
+			ps->tz.trips = hid_power_supply_trips;
+			ps->tz.trip_mask = BIT(ps->tz.ntrips) - 1;
+
+			ps->tz.tzd = thermal_zone_device_register(ps->power_supply_desc.name,
+					ps->tz.ntrips, ps->tz.trip_mask, ps, &ps_tzd_ops, NULL, 0, 0);
+			if (IS_ERR(ps->tz.tzd))
+				return PTR_ERR(ps->tz.tzd );
+			ret = thermal_zone_device_enable(ps->tz.tzd);
+			if (ret)
+				thermal_zone_device_unregister(ps->tz.tzd);
+			return ret;
+		}
+	}
+	return 0;
+}
+
+
+static void hid_power_supply_unregister_thermal(struct hid_power_supply *ps)
+{
+	if (IS_ERR_OR_NULL(ps->tz.tzd))
+		return;
+	thermal_zone_device_unregister(ps->tz.tzd);
+}
+
 
 static int hid_power_supply_probe(struct platform_device *pdev)
 {
@@ -589,6 +780,8 @@ static int hid_power_supply_probe(struct platform_device *pdev)
 	if (ret)
 		goto cleanup;
 	
+	hid_power_supply_register_thermal(ps);
+
 	hid_power_supply_hw_read(ps, true);
 
 	ps->ready = true;
@@ -617,6 +810,8 @@ static int hid_power_supply_remove(struct platform_device *pdev)
 
 	if (ps->power_supply)
 		power_supply_unregister(ps->power_supply);
+
+	hid_power_supply_unregister_thermal(ps);
 
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
