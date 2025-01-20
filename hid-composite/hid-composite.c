@@ -22,14 +22,12 @@ static DEFINE_IDA(hid_composite_ida);
  * @usage_id:		usage id for a physical device.
  * @hsdev:		Stored hid instance for current hub device.
  * @usage_callback:	Stores registered callback functions.
- * @priv:		Private data for a physical device.
  */
 struct hid_composite_callbacks_list {
 	struct list_head list;
 	u32 usage_id;
 	struct hid_subdevice *hsdev;
 	struct hid_composite_callbacks *usage_callback;
-	void *priv;
 };
 
 struct hid_composite_device {
@@ -178,8 +176,7 @@ static struct hid_composite_callbacks *hid_composite_get_callback(
 					struct hid_device *hdev,
 					u32 usage_id,
 					int collection_index,
-					struct hid_subdevice **hsdev,
-					void **priv)
+					struct hid_subdevice **hsdev)
 {
 	struct hid_composite_callbacks_list *callback;
 	struct hid_composite_device *cdev = hid_get_drvdata(hdev);
@@ -192,7 +189,6 @@ static struct hid_composite_callbacks *hid_composite_get_callback(
 				callback->hsdev->start_collection_index) &&
 			(collection_index <
 				callback->hsdev->end_collection_index)) {
-			*priv = callback->priv;
 			*hsdev = callback->hsdev;
 			spin_unlock_irqrestore(&cdev->dyn_callback_lock,
 					       flags);
@@ -226,7 +222,6 @@ int hid_composite_register_callback(struct hid_subdevice *hsdev,
 	callback->hsdev = hsdev;
 	callback->usage_callback = usage_callback;
 	callback->usage_id = usage_id;
-	callback->priv = NULL;
 	/*
 	 * If there is a handler registered for the collection type, then
 	 * it will handle all reports for sensors in this collection. If
@@ -569,7 +564,6 @@ static int hid_composite_raw_event(struct hid_device *hdev,
 	unsigned long flags;
 	struct hid_composite_callbacks *callback = NULL;
 	struct hid_collection *collection = NULL;
-	void *priv = NULL;
 	struct hid_subdevice *hsdev = NULL;
 	int usage_id = 0;
 
@@ -600,7 +594,7 @@ static int hid_composite_raw_event(struct hid_device *hdev,
 		callback = hid_composite_get_callback(hdev,
 				usage_id,
 				report->field[i]->usage[0].collection_index,
-				&hsdev, &priv);
+				&hsdev);
 		if (!callback) {
 			ptr += sz;
 			continue;
@@ -712,7 +706,7 @@ static int hid_composite_suspend(struct hid_device *hdev, pm_message_t message)
 	list_for_each_entry(callback, &cdev->dyn_callback_list, list) {
 		if (callback->usage_callback->suspend)
 			callback->usage_callback->suspend(
-					callback->hsdev, callback->priv);
+					callback->hsdev, callback->usage_callback->pdev);
 	}
 	spin_unlock_irqrestore(&cdev->dyn_callback_lock, flags);
 
@@ -730,7 +724,7 @@ static int hid_composite_resume(struct hid_device *hdev)
 	list_for_each_entry(callback, &cdev->dyn_callback_list, list) {
 		if (callback->usage_callback->resume)
 			callback->usage_callback->resume(
-					callback->hsdev, callback->priv);
+					callback->hsdev, callback->usage_callback->pdev);
 	}
 	spin_unlock_irqrestore(&cdev->dyn_callback_lock, flags);
 
