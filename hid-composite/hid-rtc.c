@@ -266,9 +266,9 @@ hid_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	raw_time[3] = (tm->tm_hour) & 0xFF;
 	raw_time[4] = (tm->tm_min) & 0xFF;
 	raw_time[5] = (tm->tm_sec) & 0xFF;
-	raw_time[5] = 0;
+	raw_time[6] = 0;
 
-	ret = hid_composite_set_report(hsdev, HID_INPUT_REPORT,
+	ret = hid_composite_set_report(hsdev, HID_OUTPUT_REPORT,
 			report_id, CHANNEL_SCAN_INDEX_YEAR, 
 			raw_time, sizeof(raw_time));
 	if (ret)
@@ -308,7 +308,7 @@ int hid_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 	raw_time[5] = (time->tm_sec) & 0xFF;
 	raw_time[6] = 1;
 
-	ret = hid_composite_set_report(hsdev, HID_INPUT_REPORT,
+	ret = hid_composite_set_report(hsdev, HID_OUTPUT_REPORT,
 			report_id, CHANNEL_SCAN_INDEX_YEAR, 
 			raw_time, sizeof(raw_time));
 	if (ret) {
