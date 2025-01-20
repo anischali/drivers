@@ -415,17 +415,14 @@ static int hid_firmware_add_attributes(struct hid_firmware_t *firm) {
 	    case BOARD_TYPE_SOC:
             snprintf(firm->name, 32, "hid-soc-%d", firm->minor);
             break;
-	    case BOARD_TYPE_CARRIER:
-            snprintf(firm->name, 32, "hid-carrier-%d", firm->minor);
-            break;
-	    case BOARD_TYPE_BACKPLANE:
-            snprintf(firm->name, 32, "hid-backplane-%d", firm->minor);
-            break;
 	    case BOARD_TYPE_EXTENTION:
             snprintf(firm->name, 32, "hid-extention-%d", firm->minor);
             break;
          case BOARD_TYPE_EVAL_KIT:
             snprintf(firm->name, 32, "hid-evalkit-%d", firm->minor);
+            break;
+        default:
+            snprintf(firm->name, 32, "hid-unknown-%d", firm->minor);
             break;
     }
 
