@@ -711,6 +711,12 @@ static int hid_power_supply_register_thermal(struct hid_power_supply *ps) {
 			ret = thermal_zone_device_enable(ps->tz.tzd);
 			if (ret)
 				thermal_zone_device_unregister(ps->tz.tzd);
+
+			ret = sysfs_create_link(&ps->power_supply->dev.kobj, &ps->tz.tzd->device.kobj,
+				      kobject_name(&ps->tz.tzd->device.kobj));
+			if (ret)
+				thermal_zone_device_unregister(ps->tz.tzd);
+	
 			return ret;
 		}
 	}
@@ -722,6 +728,8 @@ static void hid_power_supply_unregister_thermal(struct hid_power_supply *ps)
 {
 	if (IS_ERR_OR_NULL(ps->tz.tzd))
 		return;
+
+	sysfs_remove_link(&ps->power_supply->dev.kobj, kobject_name(&ps->tz.tzd->device.kobj));
 	thermal_zone_device_unregister(ps->tz.tzd);
 }
 
@@ -808,10 +816,11 @@ static int hid_power_supply_remove(struct platform_device *pdev)
 
 	complete_all(&ps->data_completion);
 
+	hid_power_supply_unregister_thermal(ps);
+
 	if (ps->power_supply)
 		power_supply_unregister(ps->power_supply);
 
-	hid_power_supply_unregister_thermal(ps);
 
 	hid_device_io_stop(hsdev->hdev);
 	hid_composite_device_close(hsdev);
@@ -850,12 +859,6 @@ static struct platform_driver hid_power_supply_driver = {
 	.remove = hid_power_supply_remove,
 };
 
-MODULE_DESCRIPTION("HID Battery driver for USB HID based batteries");
-MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
-MODULE_LICENSE("GPL");
-
-
-
 static int __init hid_power_supply_init(void)
 {
 	int i;
@@ -878,3 +881,9 @@ static void hid_power_supply_exit(void)
 
 module_init(hid_power_supply_init);
 module_exit(hid_power_supply_exit);
+
+
+
+MODULE_DESCRIPTION("HID Battery driver for USB HID based power supplies");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
+MODULE_LICENSE("GPL");
