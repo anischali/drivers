@@ -669,7 +669,7 @@ void hid_power_supply_hot(struct thermal_zone_device *tzd) {
 
 	ps = tzd->devdata;
 
-	hid_info(ps->hsdev->hdev, "power supply hot!\n");
+	hid_warn(ps->hsdev->hdev, "hot temperature reached !!!\n");
 }
 
 void hid_power_supply_critical(struct thermal_zone_device *tzd) {
@@ -688,7 +688,7 @@ static struct thermal_zone_device_ops ps_tzd_ops = {
 	.get_trip_type	= hid_power_supply_get_trip_type,
 	.set_trip_temp	= hid_power_supply_set_trip_temp,
 	.get_trip_hyst =  hid_power_supply_get_trip_hyst,
-	//.hot = hid_power_supply_hot,
+	.hot = hid_power_supply_hot,
 	//.critical = hid_power_supply_critical,
 };
 
