@@ -308,7 +308,7 @@ static int hid_gpio_direction_output(struct gpio_chip *chip,
 	dir = !!(dirs[off]);
 	spin_unlock_irqrestore(&gpio->data_lock, flags);
 
-	if (dir == GPIO_DIRECTION_OUTPUT)
+	if (dir == GPIO_DIRECTION_OUTPUT && values[off] == !!val)
 		return 0;
 	
 	spin_lock_irqsave(&gpio->data_lock, flags);
