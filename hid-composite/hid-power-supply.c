@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright 2024 Anis CHALI <anis.chali@exfo.com>
+ * Copyright 2024 Anis CHALI <anis.chali1@outlook.com>
  * Based on the Battery driver for the Ingenic JZ47xx SoCs of Artur Rojek <contact@artur-rojek.eu>
  * based on drivers/power/supply/jz4740-battery.c
  * Based on the work of Alexander Holler <holler@ahsoftware.de> on HID Sensor HUB

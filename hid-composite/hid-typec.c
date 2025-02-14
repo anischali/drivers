@@ -382,6 +382,6 @@ static struct platform_driver hid_typec_platform_driver = {
 module_platform_driver(hid_typec_platform_driver);
 
 MODULE_DESCRIPTION("HID USB Typec");
-MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
 MODULE_LICENSE("GPL");
 MODULE_IMPORT_NS(IIO_HID);

@@ -121,6 +121,6 @@ module_exit(reset_control_class_exit);
 
 
 MODULE_DESCRIPTION("Platform resets");
-MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
 MODULE_LICENSE("GPL");
 

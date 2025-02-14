@@ -505,5 +505,5 @@ static struct platform_driver hid_i2c_platform_driver = {
 module_platform_driver(hid_i2c_platform_driver);
 
 MODULE_DESCRIPTION("HID USB I2C bridge");
-MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
 MODULE_LICENSE("GPL");

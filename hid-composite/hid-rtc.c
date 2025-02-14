@@ -519,6 +519,6 @@ module_platform_driver(hid_time_platform_driver);
 MODULE_ALIAS("platform:hid-rtc");
 
 MODULE_DESCRIPTION("HID Sensor Time");
-MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
 MODULE_LICENSE("GPL");
 MODULE_IMPORT_NS(IIO_HID);

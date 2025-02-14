@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * HID Composite driver
- * Copyright 2024 Anis CHALI <anis.chali@exfo.com>
+ * Copyright 2024 Anis CHALI <anis.chali1@outlook.com>
  * Based on the work of Alexander Holler <holler@ahsoftware.de> on HID Sensor HUB drivers/hid/hid-sensor-hub.c
  */
 #include <linux/hid.h>
@@ -935,5 +935,5 @@ static struct hid_driver hid_composite_driver = {
 module_hid_driver(hid_composite_driver);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
 MODULE_DESCRIPTION("USB HID Composite driver");

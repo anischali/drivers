@@ -242,6 +242,6 @@ static void __exit reset_control_class_exit(void)
 module_exit(reset_control_class_exit);
 
 MODULE_DESCRIPTION("sysfs resets");
-MODULE_AUTHOR("Anis CHALI <anis.chali@exfo.com>");
+MODULE_AUTHOR("Anis CHALI <anis.chali1@outlook.com>");
 MODULE_LICENSE("GPL");
 

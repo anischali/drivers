@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright 2024 Anis CHALI <anis.chali@exfo.com>
+ * Copyright 2024 Anis CHALI <anis.chali1@outlook.com>
  * Simple HID USB RGB LED driver
  * Based on the work of Alexander Holler <holler@ahsoftware.de> on HID Sensor HUB
  * Based on the work of Heiner Kallweit <hkallweit1@gmail.com> on RGB Leds.
