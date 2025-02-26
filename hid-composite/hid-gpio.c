@@ -55,8 +55,8 @@ struct hid_gpio_t {
 	struct delayed_work gpio_poll_worker;
 
 	int gpio_num;
-    struct gpio_chip gpio_chip;
-	struct irq_chip irqchip;
+    struct gpio_chip *gpio_chip;
+	struct irq_chip *irqchip;
 	char gpio_name[32];
 
 	uint8_t *data_buf;
@@ -66,6 +66,7 @@ struct hid_gpio_t {
 	int minor;
 	int base;
 
+	bool has_dts;
 	bool has_irq;
 	bool gpio_poll;
 	unsigned long irq_mask;
@@ -223,6 +224,9 @@ static int hid_gpio_get_value(struct gpio_chip *chip, unsigned off)
 	unsigned long flags;
 	uint8_t *values;
 
+	if (!gpio)
+		return -ENODEV;
+
 	ret = hid_gpio_hw_read(gpio);
 	if (ret)
 		return ret;
@@ -243,6 +247,9 @@ static void hid_gpio_set_value(struct gpio_chip *chip,
 	struct hid_gpio_t *gpio = gpiochip_get_data(chip);
 	unsigned long flags;
 	uint8_t *values;
+
+	if (!gpio)
+		return;
 
 	values = hid_gpio_get_offset(gpio, HID_GPIO_VALUE_IDX, true);
 	spin_lock_irqsave(&gpio->data_lock, flags);
@@ -270,6 +277,9 @@ static int hid_gpio_direction_input(struct gpio_chip *chip, unsigned off)
 	unsigned long flags;
 	uint8_t *dirs, dir;
 	int ret;
+
+	if (!gpio)
+		return -ENODEV;
 
 	dirs = hid_gpio_get_offset(gpio, HID_GPIO_DIRECTION_IDX, true);
 	spin_lock_irqsave(&gpio->data_lock, flags);
@@ -301,6 +311,9 @@ static int hid_gpio_direction_output(struct gpio_chip *chip,
 	uint8_t *dirs, *values, dir;
 	int ret;
 
+	if (!gpio)
+		return -ENODEV;
+
 	dirs = hid_gpio_get_offset(gpio, HID_GPIO_DIRECTION_IDX, true);
 	values = hid_gpio_get_offset(gpio, HID_GPIO_VALUE_IDX, true);
 	
@@ -308,7 +321,7 @@ static int hid_gpio_direction_output(struct gpio_chip *chip,
 	dir = !!(dirs[off]);
 	spin_unlock_irqrestore(&gpio->data_lock, flags);
 
-	if (dir == GPIO_DIRECTION_OUTPUT && values[off] == !!val)
+	if (dir == GPIO_DIRECTION_OUTPUT && values[off] == (!!val))
 		return 0;
 	
 	spin_lock_irqsave(&gpio->data_lock, flags);
@@ -340,6 +353,9 @@ static int hid_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
 	struct hid_gpio_t *gpio = gpiochip_get_data(chip);
 	unsigned long flags;
 	uint8_t *directions;
+
+	if (!gpio)
+		return -ENODEV;
 
 	ret = hid_gpio_hw_read(gpio);
 	if (ret) {
@@ -390,6 +406,9 @@ static int hid_gpio_set_config(struct gpio_chip *gc,
 {
 	struct hid_gpio_t *gpio = gpiochip_get_data(gc);
 
+	if (!gpio)
+		return -ENODEV;
+
 	switch (pinconf_to_config_param(config)) {
 	case PIN_CONFIG_BIAS_DISABLE:
 		return hid_gpio_apply_config(gpio, offset, GPIO_BIAS_DISABLE);
@@ -409,6 +428,9 @@ static void hid_gpio_irq_unmask(struct irq_data *irqd)
 	struct hid_gpio_t *gpio = gpiochip_get_data(gc);
 	unsigned long flags;
 	
+	if (!gpio)
+		return;
+
 	spin_lock_irqsave(&gpio->data_lock, flags);
 	__set_bit(irqd->hwirq, &gpio->irq_mask); 
 	spin_unlock_irqrestore(&gpio->data_lock, flags);
@@ -419,6 +441,9 @@ static void hid_gpio_irq_mask(struct irq_data *irqd)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(irqd);
 	struct hid_gpio_t *gpio = gpiochip_get_data(gc);
 	unsigned long flags;
+	
+	if (!gpio)
+		return;
 
 	spin_lock_irqsave(&gpio->data_lock, flags);
 	__clear_bit(irqd->hwirq, &gpio->irq_mask);
@@ -437,6 +462,9 @@ static unsigned int hid_gpio_irq_startup(struct irq_data *irqd)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(irqd);
 	struct hid_gpio_t *gpio = gpiochip_get_data(gc);
 	int pin = irqd_to_hwirq(irqd);
+
+	if (!gpio)
+		return 0;
 
 	INIT_DELAYED_WORK(&gpio->gpio_poll_worker, hid_gpio_poll_callback);
 
@@ -460,6 +488,9 @@ static void hid_gpio_irq_shutdown(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct hid_gpio_t *gpio = gpiochip_get_data(gc);
+
+	if (!gpio)
+		return;
 
 	cancel_delayed_work_sync(&gpio->gpio_poll_worker);
 }
@@ -497,6 +528,9 @@ static int hid_gpio_of_xlate(struct gpio_chip *chip,
 				  u32 *flags)
 {
 	struct hid_gpio_t *gpio = gpiochip_get_data(chip);
+	
+	if (!gpio)
+		return -ENODEV;
 
 	if (WARN_ON(chip->of_gpio_n_cells < 2))
 		return -EINVAL;
@@ -513,11 +547,10 @@ static int hid_gpio_of_xlate(struct gpio_chip *chip,
 static int hid_gpio_assoc_to_dts(struct platform_device *pdev) {
 	struct hid_gpio_t *gpio = platform_get_drvdata(pdev);
 	struct device_node *np;
-	struct gpio_chip *gc;
 	int ret = 0;
 	u32 report_id = 0;
+	bool e_exist = false;
 
-	gc = &gpio->gpio_chip;
 	for_each_matching_node(np, hid_gpio_dt_match) {
 		if (!of_device_is_available(np))
 			continue;
@@ -526,25 +559,23 @@ static int hid_gpio_assoc_to_dts(struct platform_device *pdev) {
 			hid_err(gpio->hsdev->hdev, 
 						"hid gpio failed to find a node with report-id (%hi), not match (%hi)!\n", 
 						gpio->report_id, report_id);
-			of_node_put(np);
 			continue;
 		}
 		
 		pdev->dev.of_node = np;
-		gc->of_node = np;
-		gc->of_gpio_n_cells = 2;
-		gc->of_xlate = hid_gpio_of_xlate;
 		pdev->dev.fwnode = of_fwnode_handle(pdev->dev.of_node);
-		ret = of_property_read_u32(gc->of_node, "gpio,base",
+		ret = of_property_read_u32(np, "gpio,base",
 				   &gpio->base);
 		if (ret)
 			gpio->base = -1;
-
-		of_node_put(pdev->dev.of_node);
+		
+		e_exist = np->data != NULL;
+		
+		gpio->has_dts = true;
 		hid_info(gpio->hsdev->hdev, "hid gpio associate to devicetree node!\n");
 	}
 
-	return ret;
+	return e_exist ? -EEXIST : ret;
 }
 #endif
 
@@ -595,14 +626,14 @@ static void hid_gpio_poll_callback(struct work_struct *work)
 	if (ret)
 		goto next_cycle;
 
-	domain = gpio->gpio_chip.irq.domain;
+	domain = gpio->gpio_chip->irq.domain;
 	gpio_mask = gpio->gpio_mask;
 
 	for_each_set_bit(offset, &virqs, gpio->gpio_num) {
-		if (!gpio->gpio_chip.to_irq)
+		if (!gpio->gpio_chip->to_irq)
 			return;
 
-		irq = gpio->gpio_chip.to_irq(&gpio->gpio_chip, offset);
+		irq = gpio->gpio_chip->to_irq(gpio->gpio_chip, offset);
 		if (irq < 0)
 			continue;
 
@@ -648,8 +679,9 @@ static int hid_gpio_platform_probe(struct platform_device *pdev)
 {
 	struct hid_subdevice *hsdev = dev_get_platdata(&pdev->dev);
 	struct hid_gpio_t *gpio;
-	struct gpio_chip *gc;
-	struct gpio_irq_chip *girq;
+	struct gpio_chip *gc = NULL;
+	struct irq_chip *irqchip = NULL;
+	struct gpio_irq_chip *girq = NULL;
 	int ret;
 
 	if (!hsdev)
@@ -669,6 +701,7 @@ static int hid_gpio_platform_probe(struct platform_device *pdev)
 	gpio->hsdev = hsdev;
 	gpio->minor = hsdev->id;
 	gpio->base = -1;
+	gpio->has_dts = false;
 	snprintf(gpio->gpio_name, 32, "hid-gpio-%d", gpio->minor);
 	platform_set_drvdata(pdev, gpio);
 
@@ -684,13 +717,6 @@ static int hid_gpio_platform_probe(struct platform_device *pdev)
 		goto io_stop_clean;
 	}
 
-	ret = hid_gpio_allocate_buffers(pdev);
-	if (ret)
-	{
-		dev_err(&pdev->dev, "failed to allocate buffers!\n");
-		goto io_stop_clean;
-	}
-
     gpio->callbacks.capture_sample = hid_gpio_capture_sample;
 	gpio->callbacks.send_event = hid_gpio_proc_event;
 #ifdef CONFIG_PM
@@ -700,53 +726,90 @@ static int hid_gpio_platform_probe(struct platform_device *pdev)
 	gpio->callbacks.pdev = pdev;
 	hid_composite_register_callback(hsdev,
 		HID_USAGE_GPIO, &gpio->callbacks);	
-    
-	gc = &gpio->gpio_chip;
+
 #if defined(CONFIG_OF_GPIO)
-	hid_gpio_assoc_to_dts(pdev);
+	ret = hid_gpio_assoc_to_dts(pdev);
+	if (ret == -EEXIST) {
+		gc = pdev->dev.of_node->data;
+		girq = &gc->irq;
+		gpio->gpio_chip = gc;
+		gpio->irqchip = girq->chip;
+		gc->parent = &pdev->dev;
+		gpiochip_set_data(gc, gpio);
+	}
 #endif
+
+	ret = hid_gpio_allocate_buffers(pdev);
+	if (ret)
+	{
+		dev_err(&pdev->dev, "failed to allocate buffers!\n");
+		goto io_stop_clean;
+	}
+
 	hid_gpio_hw_init(gpio);
 
-	gc->direction_input  = hid_gpio_direction_input;
-	gc->direction_output = hid_gpio_direction_output;
-	gc->get_direction = hid_gpio_get_direction;
-	gc->get = hid_gpio_get_value;
-	gc->set = hid_gpio_set_value;
-	gc->set_config = hid_gpio_set_config;
-	gc->can_sleep = true;
+	if (!gc) {
+		gc = kzalloc(sizeof(*gc), GFP_KERNEL);
+		if (!gc) {
+			goto callbacks_clean;
+		}
 
-	gpio->irqchip.name = gpio->gpio_name;
-	gpio->irqchip.irq_startup = hid_gpio_irq_startup;
-	gpio->irqchip.irq_shutdown = hid_gpio_irq_shutdown;
-	gpio->irqchip.irq_ack = hid_gpio_irq_ack;
-	gpio->irqchip.irq_mask = hid_gpio_irq_mask,
-	gpio->irqchip.irq_unmask = hid_gpio_irq_unmask,
-	gpio->irqchip.irq_set_type = hid_gpio_irq_set_type;
-	
-	girq = &gc->irq;
-	girq->chip = &gpio->irqchip;
-	girq->parent_handler = NULL;
-	girq->num_parents = 0;
-	girq->parents = NULL;
-	girq->default_type = IRQ_TYPE_NONE;
-	girq->handler = handle_simple_irq;
+		gc->direction_input  = hid_gpio_direction_input;
+		gc->direction_output = hid_gpio_direction_output;
+		gc->get_direction = hid_gpio_get_direction;
+		gc->get = hid_gpio_get_value;
+		gc->set = hid_gpio_set_value;
+		gc->set_config = hid_gpio_set_config;
+		gc->can_sleep = true;
+		
+		girq = &gc->irq;
+		irqchip = kzalloc(sizeof(*irqchip), GFP_KERNEL);
+		if (!irqchip)
+			goto gc_clean;
 
-	gc->base = gpio->base;
-	gc->ngpio = gpio->gpio_num;
-	gc->label = gpio->gpio_name;
- 	gc->parent = &pdev->dev;
-	gc->owner = THIS_MODULE;
+		irqchip->name = gpio->gpio_name;
+		irqchip->irq_startup = hid_gpio_irq_startup;
+		irqchip->irq_shutdown = hid_gpio_irq_shutdown;
+		irqchip->irq_ack = hid_gpio_irq_ack;
+		irqchip->irq_mask = hid_gpio_irq_mask,
+		irqchip->irq_unmask = hid_gpio_irq_unmask,
+		irqchip->irq_set_type = hid_gpio_irq_set_type;
+		
 
-	ret = devm_gpiochip_add_data(&pdev->dev, &gpio->gpio_chip, gpio);
-	if (ret) {
-		hid_err(gpio->hsdev->hdev, "failed to add a gpiochip with %d.\n", ret);
-		goto callbacks_clean;
+		girq->chip = irqchip;
+		girq->parent_handler = NULL;
+		girq->num_parents = 0;
+		girq->parents = NULL;
+		girq->default_type = IRQ_TYPE_NONE;
+		girq->handler = handle_simple_irq;
+		
+		gc->base = gpio->base;
+		gc->ngpio = gpio->gpio_num;
+		gc->label = gpio->gpio_name;
+		gc->owner = THIS_MODULE;
+		gc->of_node = pdev->dev.of_node;
+		gc->of_gpio_n_cells = 2;
+		gc->of_xlate = hid_gpio_of_xlate;
+		
+		pdev->dev.of_node->data = gc;
+		gpio->gpio_chip = gc;
+		gpio->irqchip = girq->chip;
+
+		ret = gpiochip_add_data(gc, gpio);
+		if (ret) {
+			hid_err(gpio->hsdev->hdev, "failed to add a gpiochip with %d.\n", ret);
+			goto irq_clean;
+		}
 	}
 
 	hid_info(gpio->hsdev->hdev, "hid gpio was successfully probed!\n");
 	
 	return 0;
 
+irq_clean:
+	kfree(irqchip);
+gc_clean:
+	kfree(gc);
 callbacks_clean:
 	hid_composite_remove_callback(hsdev, HID_USAGE_GPIO);
 io_stop_clean:
@@ -767,6 +830,13 @@ static int hid_gpio_platform_remove(struct platform_device *pdev)
 	if (gpio->gpio_poll) {
 		gpio->gpio_poll = false;
 		cancel_delayed_work_sync(&gpio->gpio_poll_worker);
+	}
+
+	gpiochip_set_data(gpio->gpio_chip, NULL);
+	if (!gpio->has_dts) {
+		gpiochip_remove(gpio->gpio_chip);
+		kfree(gpio->irqchip);
+		kfree(gpio->gpio_chip);
 	}
 
 	hid_device_io_stop(hsdev->hdev);
