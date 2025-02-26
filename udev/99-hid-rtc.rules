@@ -1,0 +1,2 @@
+# set hid rtc as a deault rtc.
+SUBSYSTEM=="rtc", DRIVERS=="hid_rtc", SYMLINK+="rtc", MODE="0666"

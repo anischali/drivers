@@ -1,0 +1,27 @@
+ACTION=="change|add", SUBSYSTEM=="power_supply", \
+KERNEL=="hid-battery-*", \
+ENV{HID_BATTERY_CURRENT}="$attr{current_now}", \
+ENV{HID_BATTERY_TECHNOLOGY}="$attr{technology}"
+
+SUBSYSTEM=="power_supply", KERNEL=="hid-battery-*", \
+ENV{HID_BATTERY_TECHNOLOGY}=="LiFe", GOTO="lifepo"
+
+# unkown battery take more precaution
+LABEL="default"
+SUBSYSTEM=="power_supply", KERNEL=="hid-battery-*", \
+ENV{HID_BATTERY_CURRENT}!="0", \
+ATTR{*/trip_point_0_temp}="45000", ATTR{*/trip_point_1_temp}="50000", GOTO="end"
+GOTO="unused_battery"
+
+# lifepo battery
+LABEL="lifepo"
+SUBSYSTEM=="power_supply", KERNEL=="hid-battery-*", \
+ENV{HID_BATTERY_CURRENT}!="0", \
+ATTR{*/trip_point_0_temp}="52000", ATTR{*/trip_point_1_temp}="55000", GOTO="end"
+
+# DCIN, the battery is unused we can be more permissive
+LABEL="unused_battery"
+SUBSYSTEM=="power_supply", KERNEL=="hid-battery-*", \
+ATTR{*/trip_point_0_temp}="65000", ATTR{*/trip_point_1_temp}="68000", GOTO="end" 
+
+LABEL="end"
