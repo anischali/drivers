@@ -1,0 +1,49 @@
+From c251fc3ffbae3676ad43438f0fbeb6a0325866a9 Mon Sep 17 00:00:00 2001
+From: Anis CHALI <anis.chali1@outlook>
+Date: Tue, 25 Feb 2025 15:41:22 -0500
+Subject: [PATCH] gpiolib: add per sub driver data set
+
+---
+ drivers/gpio/gpiolib.c      | 11 +++++++++++
+ include/linux/gpio/driver.h |  3 +++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/drivers/gpio/gpiolib.c b/drivers/gpio/gpiolib.c
+index 320baed949ee..5c87e9fca827 100644
+--- a/drivers/gpio/gpiolib.c
++++ b/drivers/gpio/gpiolib.c
+@@ -823,6 +823,17 @@ void *gpiochip_get_data(struct gpio_chip *gc)
+ }
+ EXPORT_SYMBOL_GPL(gpiochip_get_data);
+ 
++/**
++ * gpiochip_set_data() - set per-subdriver data for the chip
++ * @gc: GPIO chip
++ * @data: Data for GPIO chip
++ */
++void gpiochip_set_data(struct gpio_chip *gc, void *data)
++{
++	gc->gpiodev->data = data;
++}
++EXPORT_SYMBOL_GPL(gpiochip_set_data);
++
+ /**
+  * gpiochip_remove() - unregister a gpio_chip
+  * @gc: the chip to unregister
+diff --git a/include/linux/gpio/driver.h b/include/linux/gpio/driver.h
+index ad479db8f0aa..9c39bbb41d98 100644
+--- a/include/linux/gpio/driver.h
++++ b/include/linux/gpio/driver.h
+@@ -591,6 +591,9 @@ bool gpiochip_line_is_valid(const struct gpio_chip *gc, unsigned int offset);
+ /* get driver data */
+ void *gpiochip_get_data(struct gpio_chip *gc);
+ 
++/* gpiochip set data */
++void gpiochip_set_data(struct gpio_chip *gc, void *data);
++
+ struct bgpio_pdata {
+ 	const char *label;
+ 	int base;
+-- 
+2.48.1
+

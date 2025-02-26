@@ -1,0 +1,56 @@
+From 0eb164ac8005f76c8012c574b1d9ded8023826c5 Mon Sep 17 00:00:00 2001
+From: Anis Chali <anis.chali1@outlook.com>
+Date: Mon, 4 Dec 2023 10:09:59 -0500
+Subject: [PATCH] usb-hid: add a new hid subclass to support the hid composite
+ devices, consisting of using multiple usb hid report descriptors on the same
+ interface which in kernel side will present multiple devices that will use
+ the same usb interface.
+
+---
+ drivers/hid/usbhid/hid-core.c |   5 +
+ include/linux/hid.h           |   1 +
+ include/uapi/linux/hid.h      |   1 +
+ 
+diff --git a/drivers/hid/usbhid/hid-core.c b/drivers/hid/usbhid/hid-core.c
+index 2dcaf31eb9cd..5a624f7a2e3c 100644
+--- a/drivers/hid/usbhid/hid-core.c
++++ b/drivers/hid/usbhid/hid-core.c
+@@ -1050,6 +1050,11 @@ static int usbhid_parse(struct hid_device *hid)
+ 		goto err;
+ 	}
+ 
++	if (interface->desc.bInterfaceClass == USB_INTERFACE_CLASS_HID &&
++		interface->desc.bInterfaceSubClass == USB_INTERFACE_SUBCLASS_HID_COMPOSITE) {
++		hid->group = HID_GROUP_COMPOSITE;
++	}
++
+ 	hid->quirks |= quirks;
+ 
+ 	return 0;
+diff --git a/include/linux/hid.h b/include/linux/hid.h
+index 26742ca14609..adb3aff708f3 100644
+--- a/include/linux/hid.h
++++ b/include/linux/hid.h
+@@ -371,6 +371,7 @@ struct hid_item {
+ #define HID_GROUP_MULTITOUCH			0x0002
+ #define HID_GROUP_SENSOR_HUB			0x0003
+ #define HID_GROUP_MULTITOUCH_WIN_8		0x0004
++#define HID_GROUP_COMPOSITE			0x0005
+ 
+ /*
+  * Vendor specific HID device groups
+diff --git a/include/uapi/linux/hid.h b/include/uapi/linux/hid.h
+index b34492a87a8a..a45d0da2021d 100644
+--- a/include/uapi/linux/hid.h
++++ b/include/uapi/linux/hid.h
+@@ -39,6 +39,7 @@
+  */
+ 
+ #define USB_INTERFACE_SUBCLASS_BOOT	1
++#define USB_INTERFACE_SUBCLASS_HID_COMPOSITE 2
+ #define USB_INTERFACE_PROTOCOL_KEYBOARD	1
+ #define USB_INTERFACE_PROTOCOL_MOUSE	2
+
+
+2.34.1
+

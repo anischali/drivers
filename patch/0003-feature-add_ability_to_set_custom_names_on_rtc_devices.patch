@@ -1,0 +1,146 @@
+From b6d9e41db63fe52ab8b688bef24e2c4792f9d2dd Mon Sep 17 00:00:00 2001
+From: Anis CHALI <anis.chali1@outlook.com>
+Date: Tue, 16 Jul 2024 22:50:12 -0400
+Subject: [PATCH] rtc: add rtc register with a custom name
+
+---
+ drivers/rtc/Kconfig |  6 ++++
+ drivers/rtc/class.c | 74 ++++++++++++++++++++++++++++++++++++++++++++-
+ include/linux/rtc.h |  5 +++
+ 3 files changed, 84 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/rtc/Kconfig b/drivers/rtc/Kconfig
+index 5dbb208ccd36..2a3337c253e2 100644
+--- a/drivers/rtc/Kconfig
++++ b/drivers/rtc/Kconfig
+@@ -30,6 +30,12 @@ config RTC_HCTOSYS
+ 	  the value read from a specified RTC device. This is useful to avoid
+ 	  unnecessary fsck runs at boot time, and to network better.
+ 
++config RTC_NAMED_DEVICE
++	bool "Set the ability to use a custom rtc device name"
++	default n
++	help
++	  If you say yes here, you can pass the rtc device name on register.
++
+ config RTC_HCTOSYS_DEVICE
+ 	string "RTC used to set the system time"
+ 	depends on RTC_HCTOSYS
+diff --git a/drivers/rtc/class.c b/drivers/rtc/class.c
+index 0aef7df2ea70..7f895d4cf925 100644
+--- a/drivers/rtc/class.c
++++ b/drivers/rtc/class.c
+@@ -375,13 +375,47 @@ struct rtc_device *devm_rtc_allocate_device(struct device *dev)
+ 	dev_set_name(&rtc->dev, "rtc%d", id);
+ 
+ 	err = devm_add_action_or_reset(dev, devm_rtc_release_device, rtc);
+-	if (err)
++	if (err) {
++		ida_simple_remove(&rtc_ida, id);
+ 		return ERR_PTR(err);
++	}
+ 
+ 	return rtc;
+ }
+ EXPORT_SYMBOL_GPL(devm_rtc_allocate_device);
+ 
++#if defined(CONFIG_RTC_NAMED_DEVICE)
++struct rtc_device *__devm_rtc_allocate_device(struct device *dev, const char *name)
++{
++	struct rtc_device *rtc;
++	int id, err;
++
++	id = rtc_device_get_id(dev);
++	if (id < 0)
++		return ERR_PTR(id);
++
++	rtc = rtc_allocate_device();
++	if (!rtc) {
++		ida_simple_remove(&rtc_ida, id);
++		return ERR_PTR(-ENOMEM);
++	}
++
++	rtc->id = id;
++	rtc->dev.parent = dev;
++	dev_set_name(&rtc->dev, name);
++
++	err = devm_add_action_or_reset(dev, devm_rtc_release_device, rtc);
++	if (err) {
++		ida_simple_remove(&rtc_ida, id);
++		return ERR_PTR(err);
++	}
++
++	return rtc;
++}
++EXPORT_SYMBOL_GPL(__devm_rtc_allocate_device);
++#endif
++
++
+ int __devm_rtc_register_device(struct module *owner, struct rtc_device *rtc)
+ {
+ 	struct rtc_wkalrm alrm;
+@@ -464,6 +498,44 @@ struct rtc_device *devm_rtc_device_register(struct device *dev,
+ }
+ EXPORT_SYMBOL_GPL(devm_rtc_device_register);
+ 
++#if defined(CONFIG_RTC_NAMED_DEVICE)
++/**
++ * devm_rtc_device_register - resource managed rtc_device_register()
++ * @dev: the device to register
++ * @name: the name of the device
++ * @ops: the rtc operations structure
++ * @owner: the module owner
++ *
++ * @return a struct rtc on success, or an ERR_PTR on error
++ *
++ * Managed rtc_device_register(). The rtc_device returned from this function
++ * are automatically freed on driver detach.
++ * This function is deprecated, use devm_rtc_allocate_device and
++ * rtc_register_device instead
++ */
++struct rtc_device *__devm_rtc_device_register(struct device *dev,
++					    const char *name,
++					    const struct rtc_class_ops *ops,
++					    struct module *owner)
++{
++	struct rtc_device *rtc;
++	int err;
++
++	rtc = __devm_rtc_allocate_device(dev, name);
++	if (IS_ERR(rtc))
++		return rtc;
++
++	rtc->ops = ops;
++
++	err = __devm_rtc_register_device(owner, rtc);
++	if (err)
++		return ERR_PTR(err);
++
++	return rtc;
++}
++EXPORT_SYMBOL_GPL(__devm_rtc_device_register);
++#endif
++
+ static int __init rtc_init(void)
+ {
+ 	rtc_class = class_create(THIS_MODULE, "rtc");
+diff --git a/include/linux/rtc.h b/include/linux/rtc.h
+index bd611e26291d..a3ec566fb9c4 100644
+--- a/include/linux/rtc.h
++++ b/include/linux/rtc.h
+@@ -179,7 +179,12 @@ extern struct rtc_device *devm_rtc_device_register(struct device *dev,
+ 					const char *name,
+ 					const struct rtc_class_ops *ops,
+ 					struct module *owner);
++extern struct rtc_device *__devm_rtc_device_register(struct device *dev,
++					const char *name,
++					const struct rtc_class_ops *ops,
++					struct module *owner);
+ struct rtc_device *devm_rtc_allocate_device(struct device *dev);
++struct rtc_device *__devm_rtc_allocate_device(struct device *dev, const char *name);
+ int __devm_rtc_register_device(struct module *owner, struct rtc_device *rtc);
+ 
+ extern int rtc_read_time(struct rtc_device *rtc, struct rtc_time *tm);
+-- 
+2.45.2
+
